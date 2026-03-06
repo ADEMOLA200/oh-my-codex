@@ -18,6 +18,7 @@ import {
   readEnterpriseMailbox,
   readEnterpriseSubordinateRecord,
   classifyEnterpriseWorkerHealth,
+  touchEnterpriseWorkerHeartbeat,
   listEnterpriseAssignments,
   listEnterpriseEscalations,
   listEnterpriseWorkerHeartbeats,
@@ -47,6 +48,7 @@ Usage: omx enterprise [options] "<task description>"
        omx enterprise shutdown
        omx enterprise shutdown-node <node-id>
        omx enterprise nudge <node-id> "<message>"
+       omx enterprise heartbeat <node-id>
        omx enterprise refresh-monitor
        omx enterprise assign <lead-id> "<subject>:<scope>"
        omx enterprise escalate <node-id> "<summary>" [--details "..."]
@@ -73,6 +75,7 @@ Examples:
   omx enterprise assign division-1 "Verifier:verify runtime shell"
   omx enterprise shutdown-node subordinate-1
   omx enterprise nudge subordinate-1 "continue and summarize blockers"
+  omx enterprise heartbeat subordinate-1
   omx enterprise message subordinate-1 division-1 "verification complete"
   omx enterprise mailbox chairman-1
   omx enterprise escalate subordinate-1 "needs chairman attention" --details "blocked on shared file ownership"
@@ -369,6 +372,21 @@ export async function enterpriseCommand(args: string[]): Promise<void> {
     return;
   }
 
+
+
+  if (subcommand === 'heartbeat') {
+    const nodeId = args[1];
+    if (!nodeId) throw new Error('Usage: omx enterprise heartbeat <node-id>');
+    const workerIdentity = await readEnterpriseWorkerIdentity(process.cwd(), nodeId);
+    const record = await touchEnterpriseWorkerHeartbeat(
+      process.cwd(),
+      nodeId,
+      workerIdentity?.ownerLeadId ?? null,
+      workerIdentity?.paneId ?? null,
+    );
+    console.log(`Enterprise heartbeat updated: ${record.nodeId}`);
+    return;
+  }
 
   if (subcommand === 'nudge') {
     const nodeId = args[1];

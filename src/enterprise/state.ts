@@ -164,6 +164,24 @@ export async function writeEnterpriseWorkerHeartbeat(cwd: string, record: Enterp
   await writeFile(workerHeartbeatPath(cwd, record.nodeId), JSON.stringify(record, null, 2));
 }
 
+
+export async function touchEnterpriseWorkerHeartbeat(
+  cwd: string,
+  nodeId: string,
+  ownerLeadId: string | null,
+  paneId: string | null,
+): Promise<EnterpriseWorkerHeartbeatRecord> {
+  const record: EnterpriseWorkerHeartbeatRecord = {
+    nodeId,
+    paneId,
+    alive: true,
+    lastHeartbeatAt: new Date().toISOString(),
+    ownerLeadId,
+  };
+  await writeEnterpriseWorkerHeartbeat(cwd, record);
+  return record;
+}
+
 export async function readEnterpriseWorkerHeartbeat(cwd: string, nodeId: string): Promise<EnterpriseWorkerHeartbeatRecord | null> {
   const path = workerHeartbeatPath(cwd, nodeId);
   if (!existsSync(path)) return null;
