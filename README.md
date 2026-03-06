@@ -460,6 +460,7 @@ npm test
 
 - Full changelog: `CHANGELOG.md`
 - Migration guide (post-v0.4.4 mainline): `docs/migration-mainline-post-v0.4.4.md`
+- Migration guide (1.0-beta public surface): `docs/migration-1.0-beta-public-surface.md`
 - Coverage and parity notes: `COVERAGE.md`
 - Hook extension workflow: `docs/hooks-extension.md`
 - OpenClaw integration examples: `docs/openclaw-integration.md`

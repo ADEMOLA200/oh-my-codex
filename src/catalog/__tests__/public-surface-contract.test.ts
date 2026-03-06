@@ -55,8 +55,6 @@ describe('catalog public-surface contract', () => {
     assert.throws(() => schema.validateCatalogManifest(broken), /skills\[\d+\]\.surface/);
   });
 
-
-
   it('marks reviewer-family specialist aliases as hidden compatibility rather than public compatibility', () => {
     const manifest = readCatalogManifest();
     for (const name of ['style-reviewer', 'quality-reviewer', 'api-reviewer', 'performance-reviewer']) {
@@ -97,7 +95,17 @@ describe('catalog public-surface contract', () => {
 
     assert.match(agents, /\/prompts:critic\s+"challenge this plan"/i);
     assert.match(templateAgents, /\/prompts:critic\s+"challenge this plan"/i);
-    assert.doesNotMatch(agents, /\/prompts:architect\s+"review auth/iu);
-    assert.doesNotMatch(templateAgents, /\/prompts:architect\s+"review auth/iu);
+    assert.doesNotMatch(agents, /\/prompts:architect\s+"review auth/i);
+    assert.doesNotMatch(templateAgents, /\/prompts:architect\s+"review auth/i);
+  });
+
+  it('documents the 1.0-beta public-surface migration guide', async () => {
+    const guide = await readRepoFile('docs/migration-1.0-beta-public-surface.md');
+
+    assert.match(guide, /analyze/i);
+    assert.match(guide, /code-review/i);
+    assert.match(guide, /critic/i);
+    assert.match(guide, /first-class public critique agent/i);
+    assert.match(guide, /executor\.md`? remains untouched/i);
   });
 });
