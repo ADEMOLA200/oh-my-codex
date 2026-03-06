@@ -336,6 +336,15 @@ export async function enterpriseCommand(args: string[]): Promise<void> {
     }
     await refreshEnterpriseLiveMonitor();
     for (const line of summarizeEnterpriseHandle(refreshed)) console.log(line);
+    const heartbeats = await listEnterpriseWorkerHeartbeats(process.cwd());
+    const counts = { healthy: 0, stale: 0, offline: 0 };
+    for (const heartbeat of heartbeats) {
+      const health = classifyEnterpriseWorkerHealth(heartbeat);
+      counts[health] += 1;
+    }
+    if (heartbeats.length > 0) {
+      console.log(`Worker health: healthy=${counts.healthy} stale=${counts.stale} offline=${counts.offline}`);
+    }
     return;
   }
 

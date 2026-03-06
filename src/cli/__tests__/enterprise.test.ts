@@ -325,6 +325,40 @@ describe('enterpriseCommand', () => {
     }
   });
 
+
+  it('prints worker health summary in enterprise status after live-start', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-enterprise-cli-'));
+    const previousCwd = process.cwd();
+    const previousTmux = process.env.TMUX;
+    const logs: string[] = [];
+    const originalLog = console.log;
+    try {
+      process.chdir(cwd);
+      process.env.TMUX = 'leader-session';
+      console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
+      await enterpriseCommand(['issue', '590']);
+
+      const tmuxAdapter = await import('../../enterprise/tmux-adapter.js');
+      mock.method(tmuxAdapter.enterpriseTmuxAdapter, 'isTmuxAvailable', async () => true);
+      mock.method(tmuxAdapter.enterpriseTmuxAdapter, 'createTmuxSession', async () => ({
+        name: 'leader:1', workerCount: 1, cwd, workerPaneIds: ['%101'], leaderPaneId: '%100', hudPaneId: null, resizeHookName: null, resizeHookTarget: null,
+      }));
+      mock.method(tmuxAdapter.enterpriseTmuxAdapter, 'buildWorkerStartupCommand', async (_team: string, idx: number) => `codex --worker ${idx}`);
+      mock.method(tmuxAdapter.enterpriseTmuxAdapter, 'spawnPane', async () => '%102');
+      await enterpriseCommand(['live-start']);
+
+      logs.length = 0;
+      await enterpriseCommand(['status']);
+      assert.ok(logs.some((line) => line.includes('Worker health: healthy=')));
+    } finally {
+      mock.restoreAll();
+      process.chdir(previousCwd);
+      console.log = originalLog;
+      if (typeof previousTmux === 'string') process.env.TMUX = previousTmux; else delete process.env.TMUX;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('applies updates through the CLI and shows rolled-up status', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-enterprise-cli-'));
     const previousCwd = process.cwd();
