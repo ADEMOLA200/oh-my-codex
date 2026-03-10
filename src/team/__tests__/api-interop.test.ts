@@ -17,6 +17,7 @@ import {
   sendDirectMessage,
   enqueueDispatchRequest,
   readDispatchRequest,
+  appendTeamEvent,
 } from '../state.js';
 
 async function setupTeam(name: string): Promise<{ cwd: string; cleanup: () => Promise<void> }> {
@@ -52,7 +53,7 @@ describe('resolveTeamApiOperation', () => {
     assert.equal(resolveTeamApiOperation('  SEND_MESSAGE  '), 'send-message');
   });
 
-  it('resolves all 28 operations from the operation list', () => {
+  it('resolves all 30 operations from the operation list', () => {
     for (const op of TEAM_API_OPERATIONS) {
       assert.equal(resolveTeamApiOperation(op), op);
     }
@@ -94,8 +95,8 @@ describe('LEGACY_TEAM_MCP_TOOLS', () => {
 });
 
 describe('TEAM_API_OPERATIONS', () => {
-  it('contains 28 operations', () => {
-    assert.equal(TEAM_API_OPERATIONS.length, 28);
+  it('contains 30 operations', () => {
+    assert.equal(TEAM_API_OPERATIONS.length, 30);
   });
 
   it('all use kebab-case', () => {
@@ -891,6 +892,124 @@ describe('executeTeamApiOperation: append-event', () => {
       team_name: 'x',
     }, '/tmp');
     assert.equal(result.ok, false);
+  });
+});
+
+// ─── read-events ──────────────────────────────────────────────────────────
+
+describe('executeTeamApiOperation: read-events', () => {
+  it('returns canonical filtered events', async () => {
+    const { cwd, cleanup } = await setupTeam('evt-read');
+    try {
+      const first = await appendTeamEvent('evt-read', {
+        type: 'task_completed',
+        worker: 'worker-2',
+        task_id: '2',
+      }, cwd);
+      const second = await appendTeamEvent('evt-read', {
+        type: 'worker_idle',
+        worker: 'worker-1',
+        task_id: '1',
+        prev_state: 'working',
+      }, cwd);
+      await appendTeamEvent('evt-read', {
+        type: 'task_failed',
+        worker: 'worker-1',
+        task_id: '1',
+      }, cwd);
+
+      const result = await executeTeamApiOperation('read-events', {
+        team_name: 'evt-read',
+        after_event_id: first.event_id,
+        worker: 'worker-1',
+        task_id: '1',
+        type: 'worker_idle',
+      }, cwd);
+
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.equal(result.data.count, 1);
+        assert.equal(result.data.cursor, second.event_id);
+        const events = result.data.events as Array<{ type?: string; source_type?: string; worker?: string; task_id?: string }>;
+        assert.equal(events.length, 1);
+        assert.equal(events[0]?.type, 'worker_state_changed');
+        assert.equal(events[0]?.source_type, 'worker_idle');
+        assert.equal(events[0]?.worker, 'worker-1');
+        assert.equal(events[0]?.task_id, '1');
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects invalid event filters', async () => {
+    const result = await executeTeamApiOperation('read-events', {
+      team_name: 'evt-read-invalid',
+      type: 'not_an_event',
+    }, '/tmp');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.error.message, /type must be one of/);
+    }
+  });
+});
+
+// ─── await-event ──────────────────────────────────────────────────────────
+
+describe('executeTeamApiOperation: await-event', () => {
+  it('waits for the next matching event', async () => {
+    const { cwd, cleanup } = await setupTeam('evt-await');
+    try {
+      const waitPromise = executeTeamApiOperation('await-event', {
+        team_name: 'evt-await',
+        worker: 'worker-1',
+        task_id: '1',
+        type: 'task_completed',
+        timeout_ms: 500,
+        poll_ms: 25,
+      }, cwd);
+
+      setTimeout(() => {
+        void appendTeamEvent('evt-await', {
+          type: 'worker_state_changed',
+          worker: 'worker-2',
+          task_id: '2',
+          state: 'working',
+        }, cwd);
+      }, 25);
+
+      setTimeout(() => {
+        void appendTeamEvent('evt-await', {
+          type: 'task_completed',
+          worker: 'worker-1',
+          task_id: '1',
+        }, cwd);
+      }, 60);
+
+      const result = await waitPromise;
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.equal(result.data.status, 'event');
+        assert.equal(typeof result.data.cursor, 'string');
+        const event = result.data.event as { type?: string; worker?: string; task_id?: string } | null;
+        assert.equal(event?.type, 'task_completed');
+        assert.equal(event?.worker, 'worker-1');
+        assert.equal(event?.task_id, '1');
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects invalid timeout values', async () => {
+    const result = await executeTeamApiOperation('await-event', {
+      team_name: 'evt-await-invalid',
+      timeout_ms: -1,
+    }, '/tmp');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.error.message, /timeout_ms must be a non-negative integer/);
+    }
   });
 });
 

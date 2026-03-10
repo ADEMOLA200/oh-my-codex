@@ -11,6 +11,7 @@ import {
   type TeamEventType,
   type TeamTaskApprovalStatus,
 } from './contracts.js';
+import { readTeamEvents, waitForTeamEvent } from './state/events.js';
 import {
   teamSendMessage as sendDirectMessage,
   teamBroadcast as broadcastMessage,
@@ -101,6 +102,8 @@ export const TEAM_API_OPERATIONS = [
   'write-worker-inbox',
   'write-worker-identity',
   'append-event',
+  'read-events',
+  'await-event',
   'get-summary',
   'cleanup',
   'write-shutdown-request',
@@ -146,6 +149,37 @@ async function markLatestMailboxDispatchDelivered(
 
 function isFiniteInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && Number.isFinite(value);
+}
+
+function parseOptionalNonNegativeInteger(value: unknown, fieldName: string): number | null {
+  if (value === undefined) return null;
+  if (!isFiniteInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer when provided`);
+  }
+  return value;
+}
+
+function parseOptionalBoolean(value: unknown, fieldName: string): boolean | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'boolean') {
+    throw new Error(`${fieldName} must be a boolean when provided`);
+  }
+  return value;
+}
+
+function parseOptionalEventType(value: unknown): TeamEventType | 'worker_idle' | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') {
+    throw new Error('type must be a string when provided');
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error('type cannot be empty when provided');
+  }
+  if (!TEAM_EVENT_TYPES.includes(normalized as TeamEventType)) {
+    throw new Error(`type must be one of: ${TEAM_EVENT_TYPES.join(', ')}`);
+  }
+  return normalized as TeamEventType | 'worker_idle';
 }
 
 function parseValidatedTaskIdArray(value: unknown, fieldName: string): string[] {
@@ -582,6 +616,62 @@ export async function executeTeamApiOperation(
           source_type: args.source_type as string | undefined,
         }, cwd);
         return { ok: true, operation, data: { event } };
+      }
+      case 'read-events': {
+        const teamName = String(args.team_name || '').trim();
+        if (!teamName) {
+          return { ok: false, operation, error: { code: 'invalid_input', message: 'team_name is required' } };
+        }
+        const wakeableOnly = parseOptionalBoolean(args.wakeable_only, 'wakeable_only');
+        const eventType = parseOptionalEventType(args.type);
+        const worker = typeof args.worker === 'string' ? args.worker.trim() : '';
+        const taskId = typeof args.task_id === 'string' ? args.task_id.trim() : '';
+        const events = await readTeamEvents(teamName, cwd, {
+          afterEventId: typeof args.after_event_id === 'string' ? args.after_event_id.trim() || undefined : undefined,
+          wakeableOnly: wakeableOnly ?? false,
+          type: eventType ?? undefined,
+          worker: worker || undefined,
+          taskId: taskId || undefined,
+        });
+        return {
+          ok: true,
+          operation,
+          data: {
+            count: events.length,
+            cursor: events.at(-1)?.event_id ?? (typeof args.after_event_id === 'string' ? args.after_event_id.trim() : ''),
+            events,
+          },
+        };
+      }
+      case 'await-event': {
+        const teamName = String(args.team_name || '').trim();
+        if (!teamName) {
+          return { ok: false, operation, error: { code: 'invalid_input', message: 'team_name is required' } };
+        }
+        const timeoutMs = parseOptionalNonNegativeInteger(args.timeout_ms, 'timeout_ms') ?? 30_000;
+        const pollMs = parseOptionalNonNegativeInteger(args.poll_ms, 'poll_ms');
+        const wakeableOnly = parseOptionalBoolean(args.wakeable_only, 'wakeable_only');
+        const eventType = parseOptionalEventType(args.type);
+        const worker = typeof args.worker === 'string' ? args.worker.trim() : '';
+        const taskId = typeof args.task_id === 'string' ? args.task_id.trim() : '';
+        const result = await waitForTeamEvent(teamName, cwd, {
+          afterEventId: typeof args.after_event_id === 'string' ? args.after_event_id.trim() || undefined : undefined,
+          timeoutMs,
+          pollMs: pollMs ?? undefined,
+          wakeableOnly: wakeableOnly ?? false,
+          type: eventType ?? undefined,
+          worker: worker || undefined,
+          taskId: taskId || undefined,
+        });
+        return {
+          ok: true,
+          operation,
+          data: {
+            status: result.status,
+            cursor: result.cursor,
+            event: result.event ?? null,
+          },
+        };
       }
       case 'get-summary': {
         const teamName = String(args.team_name || '').trim();

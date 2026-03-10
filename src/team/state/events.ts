@@ -14,6 +14,14 @@ const CANONICAL_WAKE_EVENT_TYPES = new Set<TeamEvent['type']>([
   'team_leader_nudge',
 ]);
 
+interface TeamEventReadOptions {
+  afterEventId?: string;
+  wakeableOnly?: boolean;
+  type?: TeamEvent['type'] | 'worker_idle';
+  worker?: string;
+  taskId?: string;
+}
+
 function asWorkerState(value: unknown): TeamEvent['state'] | undefined {
   return typeof value === 'string'
     && ['idle', 'working', 'blocked', 'done', 'failed', 'draining', 'unknown'].includes(value)
@@ -74,10 +82,23 @@ function isDuplicateNormalizedEvent(previous: TeamEvent | null, current: TeamEve
     && current.source_type === 'worker_idle';
 }
 
+function matchesEventType(event: TeamEvent, type: TeamEventReadOptions['type']): boolean {
+  if (!type) return true;
+  if (event.type === type) return true;
+  return type === 'worker_idle' && event.source_type === 'worker_idle';
+}
+
+function matchesEventQuery(event: TeamEvent, opts: TeamEventReadOptions): boolean {
+  if (!matchesEventType(event, opts.type)) return false;
+  if (opts.worker && event.worker !== opts.worker) return false;
+  if (opts.taskId && event.task_id !== opts.taskId) return false;
+  return true;
+}
+
 export async function readTeamEvents(
   teamName: string,
   cwd: string,
-  opts: { afterEventId?: string; wakeableOnly?: boolean } = {},
+  opts: TeamEventReadOptions = {},
 ): Promise<TeamEvent[]> {
   const path = teamEventLogPath(teamName, cwd);
   if (!existsSync(path)) return [];
@@ -106,6 +127,7 @@ export async function readTeamEvents(
     if (isDuplicateNormalizedEvent(previous, normalized)) continue;
     previous = normalized;
     if (opts.wakeableOnly && !CANONICAL_WAKE_EVENT_TYPES.has(normalized.type)) continue;
+    if (!matchesEventQuery(normalized, opts)) continue;
     events.push(normalized);
   }
 
@@ -120,14 +142,28 @@ export async function getLatestTeamEventCursor(teamName: string, cwd: string): P
 export async function waitForTeamEvent(
   teamName: string,
   cwd: string,
-  opts: { afterEventId?: string; timeoutMs: number; pollMs?: number; wakeableOnly?: boolean },
+  opts: {
+    afterEventId?: string;
+    timeoutMs: number;
+    pollMs?: number;
+    wakeableOnly?: boolean;
+    type?: TeamEvent['type'] | 'worker_idle';
+    worker?: string;
+    taskId?: string;
+  },
 ): Promise<{ status: 'event' | 'timeout'; event?: TeamEvent; cursor: string }> {
   const deadline = Date.now() + Math.max(0, Math.floor(opts.timeoutMs));
   let pollMs = Math.max(25, Math.floor(opts.pollMs ?? 100));
   const baseline = opts.afterEventId ?? await getLatestTeamEventCursor(teamName, cwd);
 
   while (Date.now() <= deadline) {
-    const events = await readTeamEvents(teamName, cwd, { afterEventId: baseline, wakeableOnly: opts.wakeableOnly !== false });
+    const events = await readTeamEvents(teamName, cwd, {
+      afterEventId: baseline,
+      wakeableOnly: opts.wakeableOnly !== false,
+      type: opts.type,
+      worker: opts.worker,
+      taskId: opts.taskId,
+    });
     const event = events[0];
     if (event) {
       return { status: 'event', event, cursor: event.event_id };

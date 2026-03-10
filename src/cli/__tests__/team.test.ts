@@ -162,6 +162,76 @@ describe('teamCommand api', () => {
     }
   });
 
+  it('prints event query help for omx team api read-events help alias', async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    try {
+      console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
+      await teamCommand(['api', 'read-events', 'help']);
+      assert.equal(logs.length, 1);
+      assert.match(logs[0] ?? '', /Usage: omx team api read-events --input <json> \[--json\]/);
+      assert.match(logs[0] ?? '', /after_event_id/);
+      assert.match(logs[0] ?? '', /wakeable_only/);
+      assert.match(logs[0] ?? '', /worker_idle/);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it('executes read-events via CLI api with canonical JSON results', async () => {
+    const wd = await mkdtemp(join(tmpdir(), 'omx-team-api-read-events-'));
+    const previousCwd = process.cwd();
+    const logs: string[] = [];
+    const originalLog = console.log;
+    try {
+      process.chdir(wd);
+      await initTeamState('api-read-events', 'api event test', 'executor', 1, wd);
+      await appendTeamEvent('api-read-events', {
+        type: 'worker_idle',
+        worker: 'worker-1',
+        task_id: '1',
+        prev_state: 'working',
+      }, wd);
+      console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
+
+      await teamCommand([
+        'api',
+        'read-events',
+        '--input',
+        JSON.stringify({
+          team_name: 'api-read-events',
+          type: 'worker_idle',
+          worker: 'worker-1',
+          task_id: '1',
+        }),
+        '--json',
+      ]);
+
+      assert.equal(logs.length, 1);
+      const envelope = JSON.parse(logs[0]) as {
+        command?: string;
+        ok?: boolean;
+        operation?: string;
+        data?: {
+          count?: number;
+          events?: Array<{ type?: string; source_type?: string; worker?: string; task_id?: string }>;
+        };
+      };
+      assert.equal(envelope.command, 'omx team api read-events');
+      assert.equal(envelope.ok, true);
+      assert.equal(envelope.operation, 'read-events');
+      assert.equal(envelope.data?.count, 1);
+      assert.equal(envelope.data?.events?.[0]?.type, 'worker_state_changed');
+      assert.equal(envelope.data?.events?.[0]?.source_type, 'worker_idle');
+      assert.equal(envelope.data?.events?.[0]?.worker, 'worker-1');
+      assert.equal(envelope.data?.events?.[0]?.task_id, '1');
+    } finally {
+      console.log = originalLog;
+      process.chdir(previousCwd);
+      await rm(wd, { recursive: true, force: true });
+    }
+  });
+
   it('executes CLI interop operation with stable JSON envelope', async () => {
     const wd = await mkdtemp(join(tmpdir(), 'omx-team-api-'));
     const previousCwd = process.cwd();

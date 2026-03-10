@@ -83,6 +83,8 @@ const TEAM_API_OPERATION_REQUIRED_FIELDS: Record<TeamApiOperation, string[]> = {
   'write-worker-inbox': ['team_name', 'worker', 'content'],
   'write-worker-identity': ['team_name', 'worker', 'index', 'role'],
   'append-event': ['team_name', 'type', 'worker'],
+  'read-events': ['team_name'],
+  'await-event': ['team_name'],
   'get-summary': ['team_name'],
   'cleanup': ['team_name'],
   'write-shutdown-request': ['team_name', 'worker', 'requested_by'],
@@ -103,6 +105,8 @@ const TEAM_API_OPERATION_OPTIONAL_FIELDS: Partial<Record<TeamApiOperation, strin
     'worktree_path', 'worktree_branch', 'worktree_detached', 'team_state_root',
   ],
   'append-event': ['task_id', 'message_id', 'reason'],
+  'read-events': ['after_event_id', 'wakeable_only', 'type', 'worker', 'task_id'],
+  'await-event': ['after_event_id', 'timeout_ms', 'poll_ms', 'wakeable_only', 'type', 'worker', 'task_id'],
   'write-task-approval': ['required'],
 };
 
@@ -110,6 +114,8 @@ const TEAM_API_OPERATION_NOTES: Partial<Record<TeamApiOperation, string>> = {
   'update-task': 'Only non-lifecycle task metadata can be updated.',
   'release-task-claim': 'Use this only for rollback/requeue to pending (not for completion).',
   'transition-task-status': 'Lifecycle flow is claim-safe and typically transitions in_progress -> completed|failed.',
+  'read-events': 'Events are returned in canonical form; worker_idle log entries normalize to type worker_state_changed with source_type worker_idle. wakeable_only defaults to false; set wakeable_only=true to mirror omx team await semantics.',
+  'await-event': 'Waits for the next matching event and returns status=timeout when no matching event arrives before timeout_ms. wakeable_only defaults to false; set wakeable_only=true to mirror omx team await semantics.',
 };
 
 function sampleValueForTeamApiField(field: string): unknown {
@@ -136,6 +142,10 @@ function sampleValueForTeamApiField(field: string): unknown {
     case 'assigned_tasks': return ['1', '2'];
     case 'type': return 'task_completed';
     case 'requested_by': return 'leader-fixed';
+    case 'after_event_id': return 'evt-123';
+    case 'wakeable_only': return true;
+    case 'timeout_ms': return 500;
+    case 'poll_ms': return 100;
     case 'min_updated_at': return '2026-03-04T00:00:00.000Z';
     case 'snapshot':
       return {
