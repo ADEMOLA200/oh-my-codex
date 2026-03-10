@@ -278,6 +278,23 @@ OMX now includes `omx hooks` for plugin scaffolding and validation.
 
 See `docs/hooks-extension.md` for the full extension workflow and event model.
 
+## Sparkshell (preview)
+
+`omx sparkshell <command> [args...]` is a planned JS -> Rust sidecar command for fast command execution with adaptive summaries when output exceeds `OMX_SPARKSHELL_LINES`.
+
+Current preview contract:
+- Short output stays raw; long output is summarized into markdown sections limited to `summary:`, `failures:`, and `warnings:`.
+- Summary mode uses the local Codex CLI via `codex exec` and prefers `OMX_SPARKSHELL_MODEL`, then `OMX_SPARK_MODEL`, then the spark default model.
+- `--spark` / `--madmax-spark` remain team-worker launch flags; sparkshell model routing is controlled by env vars instead.
+- Native binary lookup order is `OMX_SPARKSHELL_BIN`, then packaged `bin/native/<platform>-<arch>/omx-sparkshell[.exe]`, then repo-local `native/omx-sparkshell/target/release/omx-sparkshell[.exe]`.
+
+Preview build helpers:
+
+```bash
+npm run build:sparkshell
+npm run test:sparkshell
+```
+
 ## Launch Flags
 
 ```bash
