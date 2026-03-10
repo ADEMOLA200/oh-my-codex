@@ -151,6 +151,15 @@ fn detect_node_version() -> Option<String> {
 mod tests {
     use super::{BINARY_NAME, CliAction, help_output, parse_args, version_output};
 
+    fn normalize_version_output(text: &str) -> String {
+        text.replace(
+            text.lines()
+                .find(|line| line.starts_with("Node.js "))
+                .unwrap_or("Node.js unknown"),
+            "Node.js <NODE_VERSION>",
+        )
+    }
+
     #[test]
     fn exposes_expected_binary_name() {
         assert_eq!(BINARY_NAME, "omx");
@@ -219,7 +228,7 @@ mod tests {
     #[test]
     fn matches_version_fixture_in_current_environment() {
         assert_eq!(
-            version_output(),
+            normalize_version_output(&version_output()),
             include_str!("../../../src/compat/fixtures/version.stdout.txt")
         );
     }
