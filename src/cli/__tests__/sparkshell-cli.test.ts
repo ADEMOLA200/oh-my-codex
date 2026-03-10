@@ -163,14 +163,17 @@ describe('omx sparkshell', () => {
     }
   });
 
-  it('fails clearly when no native binary can be found', async () => {
+  it('fails clearly when the configured native binary path does not exist', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-sparkshell-missing-'));
     try {
-      const result = runOmx(cwd, ['sparkshell', 'ls']);
+      const missingBinary = join(cwd, 'bin', 'does-not-exist');
+      const result = runOmx(cwd, ['sparkshell', 'ls'], {
+        OMX_SPARKSHELL_BIN: missingBinary,
+      });
       if (shouldSkipForSpawnPermissions(result.error)) return;
 
       assert.equal(result.status, 1, result.stderr || result.stdout);
-      assert.match(result.stderr, /native binary not found/);
+      assert.match(result.stderr, /failed to launch native binary: executable not found/);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
