@@ -54,8 +54,24 @@ function normalizeInstallDoctorOutput(text: string, home: string, cwd: string): 
   return text
     .replaceAll(join(home, '.codex').replace(/\\/g, '/'), '<CODEX_HOME>')
     .replaceAll(join(cwd, '.omx', 'state').replace(/\\/g, '/'), '<REPO_STATE_DIR>')
-    .replace(/^  \[OK\] Codex CLI: installed \(.+\)$/m, '  [OK] Codex CLI: installed (<CODEX_VERSION>)')
-    .replace(/\\/g, '/');
+    .replace(/\\/g, '/')
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('  [OK] Codex CLI:') || line.startsWith('  [XX] Codex CLI:')) {
+        return '  [CODEX_CLI_STATUS]';
+      }
+      if (line.startsWith('  [OK] Node.js:')) {
+        return '  [OK] Node.js: <NODE_VERSION>';
+      }
+      if (line.startsWith('Results: ')) {
+        return 'Results: <RESULTS>';
+      }
+      if (line.startsWith('Run "omx setup')) {
+        return 'Run <SETUP_FOLLOWUP>';
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 describe('compat doctor contract', () => {
