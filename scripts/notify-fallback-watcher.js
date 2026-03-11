@@ -105,6 +105,11 @@ let lastRalphContinueSteer = {
   pane_current_command: '',
   current_phase: '',
 };
+let lastParentGuard = {
+  reason: '',
+  state_path: '',
+  current_phase: '',
+};
 
 function eventLog(event) {
   return appendFile(logPath, `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`).catch(() => {});
@@ -371,6 +376,30 @@ async function requestShutdown(reason, signal = null) {
 async function enforceLifecycleGuards() {
   if (runOnce) return false;
   if (parentIsGone()) {
+    const activeRalph = await resolveActiveRalphState();
+    if (activeRalph.active) {
+      const currentPhase = safeString(activeRalph.state?.current_phase);
+      const nextParentGuard = {
+        reason: 'parent_gone_deferred_for_active_ralph',
+        state_path: activeRalph.path,
+        current_phase: currentPhase,
+      };
+      if (
+        lastParentGuard.reason !== nextParentGuard.reason
+        || lastParentGuard.state_path !== nextParentGuard.state_path
+        || lastParentGuard.current_phase !== nextParentGuard.current_phase
+      ) {
+        await eventLog({
+          type: 'watcher_parent_guard',
+          reason: nextParentGuard.reason,
+          state_path: nextParentGuard.state_path,
+          current_phase: currentPhase || null,
+        });
+        lastParentGuard = nextParentGuard;
+      }
+      return false;
+    }
+    lastParentGuard = { reason: '', state_path: '', current_phase: '' };
     await requestShutdown('parent_gone');
     return true;
   }

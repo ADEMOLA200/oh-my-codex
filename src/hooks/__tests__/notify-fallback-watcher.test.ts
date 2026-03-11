@@ -753,6 +753,95 @@ describe('notify-fallback watcher', () => {
     }
   });
 
+  it('keeps ticking for active session-scoped Ralph after parent loss, then stops once Ralph is terminal', async () => {
+    const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-parent-ralph-active-'));
+    const tempHome = await mkdtemp(join(tmpdir(), 'omx-fallback-parent-ralph-home-'));
+    const fakeBinDir = join(wd, 'fake-bin');
+    const tmuxLogPath = join(wd, 'tmux.log');
+    const stateDir = join(wd, '.omx', 'state');
+    const sessionId = 'sess-active-ralph';
+    const sessionStateDir = join(stateDir, 'sessions', sessionId);
+    const ralphStatePath = join(sessionStateDir, 'ralph-state.json');
+    const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+    const notifyHook = new URL('../../../scripts/notify-hook.js', import.meta.url).pathname;
+    const logPath = join(wd, '.omx', 'logs', `notify-fallback-${new Date().toISOString().split('T')[0]}.jsonl`);
+    let child: ReturnType<typeof spawn> | undefined;
+
+    try {
+      await mkdir(sessionStateDir, { recursive: true });
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeFile(join(stateDir, 'session.json'), JSON.stringify({ session_id: sessionId }, null, 2));
+      await writeFile(ralphStatePath, JSON.stringify({
+        active: true,
+        current_phase: 'executing',
+        tmux_pane_id: '%42',
+      }, null, 2));
+      await writeFile(join(fakeBinDir, 'tmux'), buildFakeTmux(tmuxLogPath));
+      await chmod(join(fakeBinDir, 'tmux'), 0o755);
+
+      const shortLivedParent = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 10)'], {
+        stdio: 'ignore',
+      });
+      assert.ok(shortLivedParent.pid, 'expected short-lived parent pid');
+      const parentPid = shortLivedParent.pid as number;
+      await once(shortLivedParent, 'exit');
+
+      child = spawn(
+        process.execPath,
+        [
+          watcherScript,
+          '--cwd',
+          wd,
+          '--notify-script',
+          notifyHook,
+          '--poll-ms',
+          '50',
+          '--parent-pid',
+          String(parentPid),
+          '--max-lifetime-ms',
+          '5000',
+        ],
+        {
+          cwd: wd,
+          stdio: 'ignore',
+          env: { ...process.env, HOME: tempHome, PATH: `${fakeBinDir}:${process.env.PATH || ''}` },
+        }
+      );
+
+      await waitFor(async () => {
+        const tmuxLog = await readFile(tmuxLogPath, 'utf-8').catch(() => '');
+        return /send-keys -t %42 -l Ralph loop active continue \[OMX_TMUX_INJECT\]/.test(tmuxLog);
+      }, 4000, 50);
+
+      assert.ok(isPidAlive(child.pid), 'expected watcher to stay alive while Ralph remains active');
+
+      await writeFile(ralphStatePath, JSON.stringify({
+        active: false,
+        current_phase: 'complete',
+        completed_at: new Date().toISOString(),
+        tmux_pane_id: '%42',
+      }, null, 2));
+
+      await waitForExit(child, 4000);
+      assert.equal(child.exitCode, 0);
+
+      const logEntries = (await readFile(logPath, 'utf-8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+      assert.ok(logEntries.some((entry: { type?: string; reason?: string }) => (
+        entry.type === 'watcher_parent_guard' && entry.reason === 'parent_gone_deferred_for_active_ralph'
+      )));
+      assert.ok(logEntries.some((entry: { type?: string; reason?: string }) => (
+        entry.type === 'watcher_stop' && entry.reason === 'parent_gone'
+      )));
+    } finally {
+      if (child && isPidAlive(child.pid)) {
+        child.kill('SIGTERM');
+        await waitForExit(child, 4000).catch(() => {});
+      }
+      await rm(wd, { recursive: true, force: true });
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it('replaces a stale watcher from the per-cwd pid file', async () => {
     const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-stale-pid-'));
     const tempHome = await mkdtemp(join(tmpdir(), 'omx-fallback-stale-home-'));
