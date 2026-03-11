@@ -649,6 +649,10 @@ describe('teamCommand status', () => {
       assert.match(output, /panes: leader=%10 hud=%11/);
       assert.match(output, /worker_panes: worker-1=%21 worker-2=%22/);
       assert.match(output, /sparkshell_hint: omx sparkshell --tmux-pane <pane-id> --tail-lines 400/);
+      assert.match(output, /inspect_leader: omx sparkshell --tmux-pane %10 --tail-lines 400/);
+      assert.match(output, /inspect_hud: omx sparkshell --tmux-pane %11 --tail-lines 400/);
+      assert.match(output, /inspect_worker-1: omx sparkshell --tmux-pane %21 --tail-lines 400/);
+      assert.match(output, /inspect_worker-2: omx sparkshell --tmux-pane %22 --tail-lines 400/);
     } finally {
       console.log = originalLog;
       process.chdir(previousCwd);
@@ -699,6 +703,7 @@ describe('teamCommand status', () => {
           hud_pane_id?: string | null;
           worker_panes?: Record<string, string>;
           sparkshell_hint?: string | null;
+          sparkshell_commands?: Record<string, string>;
         };
       };
       assert.equal(payload.team_name, 'pane-json-team');
@@ -707,6 +712,11 @@ describe('teamCommand status', () => {
       assert.equal(payload.panes?.hud_pane_id, '%31');
       assert.deepEqual(payload.panes?.worker_panes, { 'worker-1': '%41' });
       assert.equal(payload.panes?.sparkshell_hint, 'omx sparkshell --tmux-pane <pane-id> --tail-lines 400');
+      assert.deepEqual(payload.panes?.sparkshell_commands, {
+        leader: 'omx sparkshell --tmux-pane %30 --tail-lines 400',
+        hud: 'omx sparkshell --tmux-pane %31 --tail-lines 400',
+        'worker-1': 'omx sparkshell --tmux-pane %41 --tail-lines 400',
+      });
     } finally {
       console.log = originalLog;
       process.chdir(previousCwd);

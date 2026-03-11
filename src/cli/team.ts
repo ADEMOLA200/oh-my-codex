@@ -291,6 +291,7 @@ function readTeamPaneStatus(
   hud_pane_id: string | null;
   worker_panes: Record<string, string>;
   sparkshell_hint: string | null;
+  sparkshell_commands: Record<string, string>;
 } {
   if (!config) {
     return {
@@ -298,6 +299,7 @@ function readTeamPaneStatus(
       hud_pane_id: null,
       worker_panes: {},
       sparkshell_hint: null,
+      sparkshell_commands: {},
     };
   }
 
@@ -313,6 +315,17 @@ function readTeamPaneStatus(
       .filter((entry): entry is [string, string] => entry !== null),
   );
 
+  const sparkshellCommands = Object.fromEntries(
+    [
+      leaderPaneId ? ['leader', `omx sparkshell --tmux-pane ${leaderPaneId} --tail-lines 400`] : null,
+      hudPaneId ? ['hud', `omx sparkshell --tmux-pane ${hudPaneId} --tail-lines 400`] : null,
+      ...Object.entries(workerPanes).map(([workerName, paneId]) => [
+        workerName,
+        `omx sparkshell --tmux-pane ${paneId} --tail-lines 400`,
+      ] as const),
+    ].filter((entry): entry is [string, string] => entry !== null),
+  );
+
   return {
     leader_pane_id: leaderPaneId,
     hud_pane_id: hudPaneId,
@@ -320,6 +333,7 @@ function readTeamPaneStatus(
     sparkshell_hint: Object.keys(workerPanes).length > 0
       ? 'omx sparkshell --tmux-pane <pane-id> --tail-lines 400'
       : null,
+    sparkshell_commands: sparkshellCommands,
   };
 }
 
@@ -337,6 +351,10 @@ function renderTeamPaneStatus(
 
   if (paneStatus.sparkshell_hint) {
     console.log('sparkshell_hint: omx sparkshell --tmux-pane <pane-id> --tail-lines 400');
+  }
+
+  for (const [target, command] of Object.entries(paneStatus.sparkshell_commands)) {
+    console.log(`inspect_${target}: ${command}`);
   }
 }
 
