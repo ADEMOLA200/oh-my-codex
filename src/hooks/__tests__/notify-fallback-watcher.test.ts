@@ -561,6 +561,7 @@ describe('notify-fallback watcher', () => {
       const env = {
         ...process.env,
         PATH: `${fakeBinDir}:${process.env.PATH || ''}`,
+        OMX_COMPAT_TMUX: '1',
       };
 
       const first = spawnSync(
@@ -623,6 +624,7 @@ describe('notify-fallback watcher', () => {
       const env = {
         ...process.env,
         PATH: `${fakeBinDir}:${process.env.PATH || ''}`,
+        OMX_COMPAT_TMUX: '1',
       };
 
       const first = spawnSync(
@@ -700,6 +702,7 @@ describe('notify-fallback watcher', () => {
           env: {
             ...process.env,
             PATH: `${fakeBinDir}:${process.env.PATH || ''}`,
+            OMX_COMPAT_TMUX: '1',
           },
         },
       );
@@ -895,7 +898,12 @@ describe('notify-fallback watcher', () => {
         {
           cwd: wd,
           stdio: 'ignore',
-          env: { ...process.env, HOME: tempHome, PATH: `${fakeBinDir}:${process.env.PATH || ''}` },
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${fakeBinDir}:${process.env.PATH || ''}`,
+            OMX_COMPAT_TMUX: '1',
+          },
         }
       );
 

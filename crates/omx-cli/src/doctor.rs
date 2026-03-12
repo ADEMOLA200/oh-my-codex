@@ -139,6 +139,7 @@ fn run_install_doctor(
     let checks = vec![
         check_codex_cli(env),
         check_node_version(env),
+        check_tmux_compat(cwd, env),
         check_directory("Codex home", &paths.codex_home_dir),
         check_config(&paths.codex_config_file)?,
         check_prompts(&paths.prompts_dir, catalog.prompt_min)?,
@@ -182,6 +183,55 @@ fn run_install_doctor(
         stderr: Vec::new(),
         exit_code: 0,
     })
+}
+
+fn check_tmux_compat(cwd: &Path, env: &BTreeMap<OsString, OsString>) -> Check {
+    let compat = env
+        .get(&OsString::from("OMX_COMPAT_TMUX"))
+        .and_then(|v| v.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let compat_enabled = matches!(compat.as_str(), "1" | "true" | "yes");
+
+    let no_tmux_env = env
+        .get(&OsString::from("OMX_NO_TMUX"))
+        .and_then(|v| v.to_str())
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    // Native runtime may force no-tmux via team-state.json
+    let state_path = cwd.join(".omx/state/team-state.json");
+    let mut native_forced = false;
+    if let Ok(raw) = fs::read_to_string(&state_path) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
+            let no_tmux = json
+                .get("no_tmux")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let layout_mode_native = json
+                .get("layout_mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "native_equivalent")
+                .unwrap_or(false);
+            native_forced = no_tmux || layout_mode_native;
+        }
+    }
+
+    let message = if no_tmux_env {
+        "tmux compatibility: force-disabled (OMX_NO_TMUX=1)".to_string()
+    } else if native_forced {
+        "tmux compatibility: disabled by native runtime (no_tmux/native_equivalent)".to_string()
+    } else if compat_enabled {
+        "tmux compatibility: enabled (opt-in via OMX_COMPAT_TMUX)".to_string()
+    } else {
+        "tmux compatibility: disabled (default; set OMX_COMPAT_TMUX=1 to enable)".to_string()
+    };
+
+    Check {
+        name: "tmux compatibility",
+        status: CheckStatus::Pass,
+        message,
+    }
 }
 
 fn run_team_doctor(
