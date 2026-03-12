@@ -65,7 +65,8 @@ describe('tmux dependency elimination release gate artifacts', () => {
     assert.match(runtimeTests, /startTeam supports prompt launch mode without tmux and pipes trigger text via stdin/);
     assert.match(runtimeTests, /shutdownTeam force-kills prompt workers that ignore SIGTERM/);
     assert.match(runtimeTests, /monitorTeam emits worker_state_changed, worker_idle, and task_completed events based on transitions/);
-    assert.match(runtimeTests, /sendWorkerMessage hook-preferred path injects leader mailbox read guidance when leader pane exists/);
+    assert.match(runtimeTests, /sendWorkerMessage hook-preferred path keeps leader mailbox native-first even when leader pane exists/);
+    assert.match(runtimeTests, /sendWorkerMessage hook-preferred path uses tmux leader nudge only when compat tmux is explicitly enabled/);
 
     assert.match(sdkFenceTests, /sendKeys returns no_backend when OMX_NO_TMUX=1/);
     assert.match(sdkFenceTests, /native_equivalent\/no_tmux/);

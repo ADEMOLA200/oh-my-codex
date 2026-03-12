@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -664,6 +665,51 @@ describe('notify-fallback watcher', () => {
       const tmuxLog = await readFile(tmuxLogPath, 'utf8');
       const sends = tmuxLog.match(/send-keys -t %42 -l Ralph loop active continue \[OMX_TMUX_INJECT\]/g) || [];
       assert.equal(sends.length, 1, 'terminal/cleared Ralph state must stop additional periodic steer sends');
+    } finally {
+      await rm(wd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps Ralph continue steer compat-only when OMX_NO_TMUX=1', async () => {
+    const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-ralph-no-tmux-'));
+    const fakeBinDir = join(wd, 'fake-bin');
+    const tmuxLogPath = join(wd, 'tmux.log');
+    const stateDir = join(wd, '.omx', 'state');
+    const watcherStatePath = join(stateDir, 'notify-fallback-state.json');
+    try {
+      await mkdir(stateDir, { recursive: true });
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeFile(join(fakeBinDir, 'tmux'), buildFakeTmux(tmuxLogPath));
+      await chmod(join(fakeBinDir, 'tmux'), 0o755);
+      await writeFile(join(stateDir, 'ralph-state.json'), JSON.stringify({
+        active: true,
+        current_phase: 'executing',
+        tmux_pane_id: '%42',
+      }, null, 2));
+
+      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const notifyHook = new URL('../../../scripts/notify-hook.js', import.meta.url).pathname;
+      const result = spawnSync(
+        process.execPath,
+        [watcherScript, '--once', '--cwd', wd, '--notify-script', notifyHook, '--poll-ms', '50'],
+        {
+          encoding: 'utf-8',
+          env: {
+            ...process.env,
+            PATH: `${fakeBinDir}:${process.env.PATH || ''}`,
+            OMX_COMPAT_TMUX: '1',
+            OMX_NO_TMUX: '1',
+          },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+
+      assert.equal(existsSync(tmuxLogPath), false, 'OMX_NO_TMUX must prevent tmux send-keys usage');
+
+      const watcherState = JSON.parse(await readFile(watcherStatePath, 'utf-8'));
+      assert.equal(watcherState.ralph_continue_steer?.last_reason, 'env_no_tmux');
+      assert.equal(watcherState.ralph_continue_steer?.last_error, null);
+
     } finally {
       await rm(wd, { recursive: true, force: true });
     }

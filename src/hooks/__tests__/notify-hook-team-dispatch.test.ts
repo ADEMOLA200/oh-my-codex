@@ -779,4 +779,49 @@ describe('notify-hook team dispatch consumer', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it('keeps compat-only team-dispatch pending when OMX_NO_TMUX=1', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-hook-team-dispatch-'));
+    const fakeBinDir = join(cwd, 'fake-bin');
+    const tmuxLogPath = join(cwd, 'tmux.log');
+    const prevPath = process.env.PATH;
+    const prevNoTmux = process.env.OMX_NO_TMUX;
+    try {
+      await mkdir(fakeBinDir, { recursive: true });
+      await writeFile(join(fakeBinDir, 'tmux'), buildFakeTmux(tmuxLogPath));
+      await chmod(join(fakeBinDir, 'tmux'), 0o755);
+      process.env.PATH = `${fakeBinDir}:${prevPath || ''}`;
+      process.env.OMX_NO_TMUX = '1';
+
+      await initTeamState('alpha', 'task', 'executor', 1, cwd);
+      const queued = await enqueueDispatchRequest('alpha', {
+        kind: 'inbox',
+        to_worker: 'worker-1',
+        worker_index: 1,
+        pane_id: '%42',
+        trigger_message: 'ping',
+      }, cwd);
+
+      const modulePath = new URL('../../../scripts/notify-hook/team-dispatch.js', import.meta.url).pathname;
+      const mod = await import(pathToFileURL(modulePath).href);
+      const result = await mod.drainPendingTeamDispatch({ cwd, maxPerTick: 5 });
+      assert.equal(result.processed, 0);
+      assert.ok(result.skipped >= 1);
+
+      const request = await readDispatchRequest('alpha', queued.request.request_id, cwd);
+      assert.equal(request?.status, 'pending');
+      assert.equal(request?.last_reason, 'env_no_tmux');
+      assert.equal(request?.attempt_count, 0);
+      assert.equal(request?.notified_at, undefined);
+
+      const tmuxLogExists = await readFile(tmuxLogPath, 'utf8').then(() => true).catch(() => false);
+      assert.equal(tmuxLogExists, false, 'OMX_NO_TMUX should prevent any compat tmux dispatch activity');
+    } finally {
+      if (typeof prevPath === 'string') process.env.PATH = prevPath;
+      else delete process.env.PATH;
+      if (typeof prevNoTmux === 'string') process.env.OMX_NO_TMUX = prevNoTmux;
+      else delete process.env.OMX_NO_TMUX;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });

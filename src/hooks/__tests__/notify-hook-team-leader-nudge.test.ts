@@ -706,6 +706,64 @@ exit 0
     });
   });
 
+  it('treats tmux leader nudges as compat-only when OMX_NO_TMUX=1', async () => {
+    await withTempWorkingDir(async (cwd) => {
+      const omxDir = join(cwd, '.omx');
+      const stateDir = join(omxDir, 'state');
+      const logsDir = join(omxDir, 'logs');
+      const teamName = 'no-tmux-nudge';
+      const teamDir = join(stateDir, 'team', teamName);
+      const workersDir = join(teamDir, 'workers');
+      const fakeBinDir = join(cwd, 'fake-bin');
+      const fakeTmuxPath = join(fakeBinDir, 'tmux');
+      const tmuxLogPath = join(cwd, 'tmux.log');
+
+      await mkdir(logsDir, { recursive: true });
+      await mkdir(workersDir, { recursive: true });
+      await mkdir(fakeBinDir, { recursive: true });
+
+      await writeJson(join(stateDir, 'team-state.json'), {
+        active: true,
+        team_name: teamName,
+        current_phase: 'team-exec',
+      });
+      await writeJson(join(teamDir, 'config.json'), {
+        name: teamName,
+        tmux_session: 'no-tmux-nudge:0',
+        leader_pane_id: '%55',
+        workers: [
+          { name: 'worker-1', index: 1, role: 'executor', assigned_tasks: [] },
+        ],
+      });
+      await writeJson(join(stateDir, 'hud-state.json'), {
+        last_turn_at: new Date(Date.now() - 300_000).toISOString(),
+        turn_count: 1,
+      });
+      await mkdir(join(workersDir, 'worker-1'), { recursive: true });
+      await writeJson(join(workersDir, 'worker-1', 'status.json'), {
+        state: 'working',
+        updated_at: new Date().toISOString(),
+      });
+
+      await writeFile(fakeTmuxPath, buildFakeTmux(tmuxLogPath));
+      await chmod(fakeTmuxPath, 0o755);
+
+      const result = runNotifyHook(cwd, fakeBinDir, { OMX_NO_TMUX: '1' });
+      assert.equal(result.status, 0, `notify-hook failed: ${result.stderr || result.stdout}`);
+
+      assert.equal(existsSync(tmuxLogPath), false, 'compat-disabled path should not query or inject tmux');
+
+      const logPath = join(logsDir, `tmux-hook-${new Date().toISOString().split('T')[0]}.jsonl`);
+      assert.ok(existsSync(logPath), 'compat-disabled leader nudge should still be logged');
+      const entries = (await readFile(logPath, 'utf-8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+      const deferred = entries.find((entry: { type?: string; reason?: string }) =>
+        entry.type === 'leader_notification_deferred' && entry.reason === 'env_no_tmux');
+      assert.ok(deferred, 'should log env_no_tmux deferred leader nudge');
+      assert.equal(deferred.tmux_injection_attempted, false);
+      assert.equal(deferred.source_type, 'leader_nudge');
+    });
+  });
+
   it('syncs stale root team-state to inactive when team-local phase is already terminal', async () => {
     await withTempWorkingDir(async (cwd) => {
       const omxDir = join(cwd, '.omx');

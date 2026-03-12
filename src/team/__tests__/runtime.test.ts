@@ -2876,7 +2876,7 @@ esac
     }
   });
 
-  it('sendWorkerMessage hook-preferred path injects leader mailbox read guidance when leader pane exists', async () => {
+  it('sendWorkerMessage hook-preferred path keeps leader mailbox native-first even when leader pane exists', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-leader-inject-'));
     const fakeBinDir = await mkdtemp(join(tmpdir(), 'omx-runtime-leader-inject-bin-'));
     const tmuxLogPath = join(fakeBinDir, 'tmux.log');
@@ -2915,16 +2915,76 @@ esac
 
       await sendWorkerMessage('team-leader-inject', 'worker-1', 'leader-fixed', 'hello leader', cwd);
 
-      const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
-      assert.match(tmuxLog, /send-keys -t %55 -l -- Read \.omx\/state\/team\/team-leader-inject\/mailbox\/leader-fixed\.json; worker-1 sent a new message\. Reply with the next concrete step\./);
+      const tmuxLog = existsSync(tmuxLogPath)
+        ? await readFile(tmuxLogPath, 'utf-8')
+        : '';
+      assert.doesNotMatch(tmuxLog, /send-keys/);
 
       const mailbox = await listMailboxMessages('team-leader-inject', 'leader-fixed', cwd);
-      assert.ok(mailbox.some((m: { notified_at?: string }) => typeof m.notified_at === 'string' && m.notified_at.length > 0));
+      assert.ok(mailbox.length >= 1, `expected at least 1 mailbox message, got ${mailbox.length}`);
+      const notifiedMsg = mailbox.find((m: { notified_at?: string }) => m.notified_at);
+      assert.equal(notifiedMsg, undefined, 'leader mailbox message should remain unnotified on native-first default path');
 
       const requests = await listDispatchRequests('team-leader-inject', cwd, { kind: 'mailbox', to_worker: 'leader-fixed' });
       const latest = requests[requests.length - 1];
-      assert.equal(latest?.status, 'notified');
+      assert.equal(latest?.status, 'pending');
     } finally {
+      if (typeof previousPath === 'string') process.env.PATH = previousPath;
+      else delete process.env.PATH;
+      await rm(cwd, { recursive: true, force: true });
+      await rm(fakeBinDir, { recursive: true, force: true });
+    }
+  });
+
+  it('sendWorkerMessage hook-preferred path uses tmux leader nudge only when compat tmux is explicitly enabled', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-runtime-leader-inject-compat-'));
+    const fakeBinDir = await mkdtemp(join(tmpdir(), 'omx-runtime-leader-inject-compat-bin-'));
+    const tmuxLogPath = join(fakeBinDir, 'tmux.log');
+    const tmuxStubPath = join(fakeBinDir, 'tmux');
+    const previousPath = process.env.PATH;
+    const previousCompat = process.env.OMX_COMPAT_TMUX;
+    try {
+      await writeFile(
+        tmuxStubPath,
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "${tmuxLogPath}"
+case "\${1:-}" in
+  send-keys)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`,
+      );
+      await chmod(tmuxStubPath, 0o755);
+      process.env.PATH = `${fakeBinDir}:${previousPath ?? ''}`;
+      process.env.OMX_COMPAT_TMUX = '1';
+
+      await initTeamState('team-leader-inject-compat', 'leader injection compat test', 'executor', 1, cwd);
+      const cfg = await readTeamConfig('team-leader-inject-compat', cwd);
+      assert.ok(cfg);
+      if (!cfg) throw new Error('missing team config');
+      cfg.leader_pane_id = '%55';
+      await saveTeamConfig(cfg, cwd);
+
+      const manifestPath = join(cwd, '.omx', 'state', 'team', 'team-leader-inject-compat', 'manifest.v2.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
+      manifest.policy = { ...(manifest.policy || {}), dispatch_ack_timeout_ms: 100 };
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+      await sendWorkerMessage('team-leader-inject-compat', 'worker-1', 'leader-fixed', 'hello leader', cwd);
+
+      const tmuxLog = await readFile(tmuxLogPath, 'utf-8');
+      assert.match(tmuxLog, /send-keys -t %55 -l -- Read \.omx\/state\/team\/team-leader-inject-compat\/mailbox\/leader-fixed\.json; worker-1 sent a new message\. Reply with the next concrete step\./);
+
+      const mailbox = await listMailboxMessages('team-leader-inject-compat', 'leader-fixed', cwd);
+      assert.ok(mailbox.some((m: { notified_at?: string }) => typeof m.notified_at === 'string' && m.notified_at.length > 0));
+    } finally {
+      if (typeof previousCompat === 'string') process.env.OMX_COMPAT_TMUX = previousCompat;
+      else delete process.env.OMX_COMPAT_TMUX;
       if (typeof previousPath === 'string') process.env.PATH = previousPath;
       else delete process.env.PATH;
       await rm(cwd, { recursive: true, force: true });

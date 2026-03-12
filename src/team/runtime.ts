@@ -2090,7 +2090,25 @@ async function emitMonitorDerivedEvents(
   }
 }
 
-async function notifyWorkerOutcome(config: TeamConfig, workerIndex: number, message: string, workerPaneId?: string): Promise<DispatchOutcome> {
+type CompatTmuxDispatchMode = 'default_fallback' | 'explicit_direct';
+
+function canUseCompatTmuxDispatch(
+  config: TeamConfig,
+  mode: CompatTmuxDispatchMode = 'default_fallback',
+): boolean {
+  if (config.worker_launch_mode !== 'interactive') return false;
+  if (!config.tmux_session || !isTmuxAvailable()) return false;
+  if (mode === 'explicit_direct') return true;
+  return isCompatTmuxDispatchEnabled();
+}
+
+async function notifyWorkerOutcome(
+  config: TeamConfig,
+  workerIndex: number,
+  message: string,
+  workerPaneId?: string,
+  mode: CompatTmuxDispatchMode = 'default_fallback',
+): Promise<DispatchOutcome> {
   const worker = config.workers.find((candidate) => candidate.index === workerIndex);
   if (!worker) return { ok: false, transport: 'none', reason: 'worker_not_found' };
 
@@ -2109,11 +2127,23 @@ async function notifyWorkerOutcome(config: TeamConfig, workerIndex: number, mess
     }
   }
 
-  if (!config.tmux_session || !isTmuxAvailable()) {
-    return { ok: false, transport: 'tmux_send_keys', reason: 'tmux_unavailable' };
+  if (!canUseCompatTmuxDispatch(config, mode)) {
+    return {
+      ok: false,
+      transport: 'none',
+      reason: mode === 'explicit_direct' ? 'tmux_unavailable' : 'compat_tmux_fallback_disabled',
+    };
+  }
+  const tmuxSession = config.tmux_session;
+  if (!tmuxSession) {
+    return {
+      ok: false,
+      transport: 'none',
+      reason: 'tmux_unavailable',
+    };
   }
   try {
-    await sendToWorker(config.tmux_session, workerIndex, message, workerPaneId, worker.worker_cli);
+    await sendToWorker(tmuxSession, workerIndex, message, workerPaneId, worker.worker_cli);
     return { ok: true, transport: 'tmux_send_keys', reason: 'tmux_send_keys_sent' };
   } catch (error) {
     return {
@@ -2144,6 +2174,19 @@ function isLeaderPaneMissingMailboxPersistedOutcome(params: {
     && !paneId
     && outcome.ok
     && outcome.reason === 'leader_pane_missing_mailbox_persisted';
+}
+
+function envTruthy(value: string | undefined): boolean {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
+function isCompatTmuxDispatchEnabled(): boolean {
+  return envTruthy(process.env.OMX_COMPAT_TMUX)
+    && !envTruthy(process.env.OMX_NO_TMUX)
+    && !envTruthy(process.env.OMX_LAUNCH_NO_TMUX)
+    && (process.env.OMX_LAUNCH_MODE || '').trim().toLowerCase() !== 'native';
 }
 
 async function markDispatchRequestLeaderPaneMissingDeferred(params: {
@@ -2502,20 +2545,14 @@ async function finalizeHookPreferredMailboxDispatch(params: {
   };
 }
 
-async function notifyLeaderAsync(config: TeamConfig, message: string, cwd: string): Promise<DispatchOutcome> {
-  // Primary: inject directly into the leader pane via tmux send-keys.
-  // This is the fallback path when hook-based dispatch timed out, so the
-  // leader needs a direct tmux notification to wake up. Fixes #437.
-  if (config.leader_pane_id && isTmuxAvailable()) {
-    try {
-      await sendToLeaderPane(config.leader_pane_id, message);
-      return { ok: true, transport: 'tmux_send_keys', reason: 'leader_pane_notified' };
-    } catch (err) {
-      process.stderr.write(`[team/runtime] operation failed: ${err}\n`);
-      // Fall through to mailbox
-    }
-  }
-  // Fallback: write to leader mailbox (leader picks up on next hook cycle)
+async function notifyLeaderAsync(
+  config: TeamConfig,
+  message: string,
+  cwd: string,
+  mode: CompatTmuxDispatchMode = 'default_fallback',
+): Promise<DispatchOutcome> {
+  // Native-first default: persist mailbox notification regardless of pane state.
+  // Tmux send-keys remains a compat-only opt-in fallback.
   const { notifyLeaderMailboxAsync } = await import('./tmux-session.js');
   const persisted = await notifyLeaderMailboxAsync(config.name, 'system', message, cwd);
   if (!persisted) {
@@ -2523,6 +2560,25 @@ async function notifyLeaderAsync(config: TeamConfig, message: string, cwd: strin
   }
   if (!config.leader_pane_id) {
     return { ok: true, transport: 'mailbox', reason: 'leader_pane_missing_mailbox_persisted' };
+  }
+  if (
+    config.worker_launch_mode !== 'interactive'
+    || (mode === 'default_fallback' && !isCompatTmuxDispatchEnabled())
+    || !isTmuxAvailable()
+  ) {
+    return { ok: true, transport: 'mailbox', reason: 'leader_mailbox_notified' };
+  }
+
+  // Compat-only fallback: inject directly into the leader pane via tmux send-keys.
+  // This is not part of the default authority path.
+  if (config.leader_pane_id && isTmuxAvailable()) {
+    try {
+      await sendToLeaderPane(config.leader_pane_id, message);
+      return { ok: true, transport: 'tmux_send_keys', reason: 'leader_mailbox_notified_with_compat_tmux' };
+    } catch (err) {
+      process.stderr.write(`[team/runtime] operation failed: ${err}\n`);
+      return { ok: true, transport: 'mailbox', reason: 'leader_mailbox_notified' };
+    }
   }
   return { ok: true, transport: 'mailbox', reason: 'leader_mailbox_notified' };
 }
@@ -2662,7 +2718,7 @@ export async function sendWorkerMessage(
       notify: async (_target, message) => (
         leaderTransportPreference === 'hook_preferred_with_fallback'
           ? { ok: true, transport: 'hook', reason: 'queued_for_hook_dispatch' }
-          : await notifyLeaderAsync(config, message, cwd)
+          : await notifyLeaderAsync(config, message, cwd, 'explicit_direct')
       ),
     });
     let finalOutcome = outcome;
@@ -2682,7 +2738,9 @@ export async function sendWorkerMessage(
         reason: 'leader_pane_missing_mailbox_persisted',
       };
     }
-    const canLeaderFallbackDirectly = Boolean(config.leader_pane_id) && isTmuxAvailable();
+    const canLeaderFallbackDirectly = Boolean(config.leader_pane_id)
+      && isCompatTmuxDispatchEnabled()
+      && isTmuxAvailable();
     if (leaderTransportPreference === 'hook_preferred_with_fallback' && canLeaderFallbackDirectly) {
       if (!outcome.request_id || !outcome.message_id) {
         throw new Error('mailbox_notify_failed:dispatch_request_missing_id');
@@ -2730,7 +2788,7 @@ export async function sendWorkerMessage(
     notify: async (_target, message) => (
       transportPreference === 'hook_preferred_with_fallback'
         ? { ok: true, transport: 'hook', reason: 'queued_for_hook_dispatch' }
-        : await notifyWorkerOutcome(config, recipient.index, message, recipient.pane_id)
+        : await notifyWorkerOutcome(config, recipient.index, message, recipient.pane_id, 'explicit_direct')
     ),
   });
   let finalOutcome = outcome;
@@ -2787,7 +2845,7 @@ export async function broadcastWorkerMessage(
       transportPreference === 'hook_preferred_with_fallback'
         ? { ok: true, transport: 'hook', reason: 'queued_for_hook_dispatch' }
         : (typeof target.workerIndex === 'number'
-        ? await notifyWorkerOutcome(config, target.workerIndex, message, target.paneId)
+        ? await notifyWorkerOutcome(config, target.workerIndex, message, target.paneId, 'explicit_direct')
         : { ok: false, transport: 'none', reason: 'missing_worker_index' }),
   });
   const finalizedOutcomes: DispatchOutcome[] = [];
