@@ -225,6 +225,8 @@ describe('createHookPluginSdk', () => {
       } finally {
         if (originalPane !== undefined) {
           process.env.TMUX_PANE = originalPane;
+        } else {
+          delete process.env.TMUX_PANE;
         }
         await rm(cwd, { recursive: true, force: true });
       }

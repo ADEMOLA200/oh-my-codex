@@ -5,9 +5,8 @@
  */
 
 import { execFileSync, execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-
 const TMUX_PANE_TARGET_RE = /^%\d+$/;
 const DEFAULT_CAPTURE_LINES = 12;
 const MAX_CAPTURE_LINES = 2000;
@@ -23,16 +22,16 @@ function envTruthy(key: string): boolean {
 
 function isTmuxAllowed(): boolean {
   // Compatibility quarantine: require explicit opt-in via OMX_COMPAT_TMUX
-  const compat = (process.env.OMX_COMPAT_TMUX || '').toLowerCase();
-  const compatEnabled = compat === '1' || compat === 'true' || compat === 'yes';
+  const compat = (process.env.OMX_COMPAT_TMUX || "").toLowerCase();
+  const compatEnabled = compat === "1" || compat === "true" || compat === "yes";
   if (!compatEnabled) return false;
   if (envTruthy('OMX_NO_TMUX') || envTruthy('OMX_LAUNCH_NO_TMUX') || (process.env.OMX_LAUNCH_MODE || '').toLowerCase() === 'native') {
     return false;
   }
   try {
-    const teamStatePath = join(process.cwd(), '.omx', 'state', 'team-state.json');
+    const teamStatePath = join(process.cwd(), ".omx", "state", "team-state.json");
     if (existsSync(teamStatePath)) {
-      const raw = readFileSync(teamStatePath, 'utf-8');
+      const raw = readFileSync(teamStatePath, "utf-8");
       const parsed = JSON.parse(raw) as { no_tmux?: boolean };
       if (parsed && parsed.no_tmux === true) return false;
     }

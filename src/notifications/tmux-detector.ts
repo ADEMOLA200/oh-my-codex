@@ -9,12 +9,19 @@ import { execFileSync, spawnSync } from 'child_process';
 import { sleepSync } from '../utils/sleep.js';
 import { resolveCommandPathForPlatform } from '../utils/platform-command.js';
 
+function envTruthy(key: string): boolean {
+  const value = process.env[key];
+  return value === '1' || (value || '').toLowerCase() === 'true' || (value || '').toLowerCase() === 'yes';
+}
+
 export function isTmuxAvailable(): boolean {
-  // Compatibility quarantine: tmux support is disabled by default for the
-  // cargo/native-first milestone. Enable explicitly with OMX_COMPAT_TMUX=1|true.
-  const v = (process.env.OMX_COMPAT_TMUX || '').toLowerCase();
-  const compatEnabled = v === '1' || v === 'true' || v === 'yes';
-  if (!compatEnabled) return false;
+  if (
+    envTruthy('OMX_NO_TMUX') ||
+    envTruthy('OMX_LAUNCH_NO_TMUX') ||
+    (process.env.OMX_LAUNCH_MODE || '').toLowerCase() === 'native'
+  ) {
+    return false;
+  }
   return resolveCommandPathForPlatform('tmux') !== null;
 }
 

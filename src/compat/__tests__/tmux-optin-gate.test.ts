@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -18,35 +19,40 @@ function baseEvent() {
   } as const;
 }
 
-describe('compat: tmux opt-in env gate', () => {
+describe('compat: tmux availability defaults', () => {
   const originalEnv = { ...process.env } as NodeJS.ProcessEnv;
   const originalCwd = process.cwd();
   let wd: string;
+  let fakeBin: string;
 
   beforeEach(async () => {
     wd = await mkdtemp(join(tmpdir(), 'omx-compat-tmux-optin-'));
+    fakeBin = await mkdtemp(join(tmpdir(), 'omx-compat-tmux-bin-'));
     process.chdir(wd);
-    delete process.env.OMX_COMPAT_TMUX;
     delete process.env.OMX_NO_TMUX;
+    delete process.env.OMX_LAUNCH_NO_TMUX;
+    delete process.env.OMX_LAUNCH_MODE;
     delete process.env.TMUX;
     delete process.env.TMUX_PANE;
+    const tmuxPath = join(fakeBin, 'tmux');
+    await writeFile(tmuxPath, '#!/bin/sh\nexit 0\n');
+    chmodSync(tmuxPath, 0o755);
+    process.env.PATH = `${fakeBin}:${originalEnv.PATH ?? ''}`;
   });
 
   afterEach(async () => {
     process.chdir(originalCwd);
     process.env = { ...originalEnv } as NodeJS.ProcessEnv;
     await rm(wd, { recursive: true, force: true });
+    await rm(fakeBin, { recursive: true, force: true });
   });
 
-  it('disables tmux paths by default when OMX_COMPAT_TMUX is not set', async () => {
-    // Detector path should be false without opt-in
-    assert.equal(isTmuxAvailable(), false);
+  it('does not require OMX_COMPAT_TMUX when tmux is present', async () => {
+    assert.equal(isTmuxAvailable(), true);
 
-    // SDK path should report no_backend without opt-in
     const sdk = createHookPluginSdk({ cwd: wd, pluginName: 'demo', event: baseEvent(), sideEffectsEnabled: true });
     const res = await sdk.tmux.sendKeys({ text: 'echo hi', submit: false });
     assert.equal(res.ok, false);
-    assert.equal(res.reason, 'no_backend');
+    assert.equal(res.reason, 'target_missing');
   });
 });
-

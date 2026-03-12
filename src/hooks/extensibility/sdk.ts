@@ -103,15 +103,11 @@ function runTmux(args: string[]): { ok: true; stdout: string } | { ok: false; st
 }
 
 /**
- * Compatibility fence: disable tmux backend when native runtime declares no-tmux.
+ * Disable the tmux backend when the runtime is explicitly no-tmux.
  * Reads `.omx/state/team-state.json` and honors `no_tmux: true`.
  * Also honors `OMX_NO_TMUX=1` for explicit opt-out.
  */
 async function isTmuxBackendAllowed(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
-  // Compatibility quarantine: require explicit opt-in via OMX_COMPAT_TMUX.
-  const compat = (env.OMX_COMPAT_TMUX || '').toLowerCase();
-  const compatEnabled = compat === '1' || compat === 'true' || compat === 'yes';
-  if (!compatEnabled) return false;
   if (env.OMX_NO_TMUX === '1') return false;
   try {
     const raw = await readFile(join(cwd, '.omx', 'state', 'team-state.json'), 'utf-8');
