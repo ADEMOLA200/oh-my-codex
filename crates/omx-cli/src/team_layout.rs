@@ -272,10 +272,7 @@ pub fn deactivate_team_mode_state(
     )
 }
 
-pub fn find_active_prompt_team_root(
-    _cwd: &Path,
-    state_root: &Path,
-) -> io::Result<Option<PathBuf>> {
+pub fn find_active_prompt_team_root(_cwd: &Path, state_root: &Path) -> io::Result<Option<PathBuf>> {
     let Some(team_state_raw) = read_optional(state_root.join("team-state.json"))? else {
         return Ok(None);
     };

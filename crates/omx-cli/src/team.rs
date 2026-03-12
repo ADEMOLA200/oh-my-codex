@@ -1,5 +1,5 @@
 use crate::session_state::{
-    extract_json_string_field, read_current_session_id, resolve_state_root,
+    extract_json_bool_field, extract_json_string_field, read_current_session_id, resolve_state_root,
 };
 use crate::team_layout::{
     HudModeOverride, deactivate_team_mode_state, sync_prompt_layout_from_state,
@@ -1282,9 +1282,16 @@ fn run_team_shutdown(
         }
     }
 
+    let state_root = resolve_state_root(cwd, env);
+    let linked_ralph_terminal_phase = if ralph { "cancelled" } else { "complete" };
     let team_root = team_root(cwd, team_name);
     if !team_root.exists() {
-        let _ = deactivate_team_mode_state(&resolve_state_root(cwd, env), team_name, "complete");
+        propagate_team_terminal_state_to_linked_ralph(
+            &state_root,
+            team_name,
+            linked_ralph_terminal_phase,
+        )?;
+        let _ = deactivate_team_mode_state(&state_root, team_name, "complete");
         return Ok(stdout_only(&format!(
             "Team shutdown complete: {team_name}\n"
         )));
@@ -1319,11 +1326,60 @@ fn run_team_shutdown(
             let _ = terminate_worker_pid(pid);
         }
     }
-    let _ = deactivate_team_mode_state(&resolve_state_root(cwd, env), team_name, "complete");
+    propagate_team_terminal_state_to_linked_ralph(
+        &state_root,
+        team_name,
+        linked_ralph_terminal_phase,
+    )?;
+    let _ = deactivate_team_mode_state(&state_root, team_name, "complete");
     remove_team_state(&team_root)?;
     Ok(stdout_only(&format!(
         "Team shutdown complete: {team_name}\n"
     )))
+}
+
+fn propagate_team_terminal_state_to_linked_ralph(
+    state_root: &Path,
+    team_name: &str,
+    terminal_phase: &str,
+) -> Result<(), TeamError> {
+    let terminal_at = iso_timestamp();
+    for state_path in linked_ralph_state_paths(state_root) {
+        let Ok(raw) = fs::read_to_string(&state_path) else {
+            continue;
+        };
+        if extract_json_bool_field(&raw, "linked_team") != Some(true) {
+            continue;
+        }
+        if extract_json_string_field(&raw, "team_name").as_deref() != Some(team_name) {
+            continue;
+        }
+
+        let mut updated = raw;
+        updated = upsert_json_bool_field(&updated, "active", false);
+        updated = upsert_json_string_field(&updated, "current_phase", terminal_phase);
+        updated = upsert_json_string_field(&updated, "completed_at", &terminal_at);
+        updated = upsert_json_string_field(&updated, "last_turn_at", &terminal_at);
+        updated = upsert_json_string_field(&updated, "linked_team_terminal_phase", terminal_phase);
+        updated = upsert_json_string_field(&updated, "linked_team_terminal_at", &terminal_at);
+        fs::write(&state_path, updated).map_err(|error| {
+            TeamError::runtime(format!("failed to write {}: {error}", state_path.display()))
+        })?;
+    }
+    Ok(())
+}
+
+fn linked_ralph_state_paths(state_root: &Path) -> Vec<std::path::PathBuf> {
+    let mut paths = vec![state_root.join("ralph-state.json")];
+    if let Some(session_id) = read_current_session_id(state_root) {
+        paths.push(
+            state_root
+                .join("sessions")
+                .join(session_id)
+                .join("ralph-state.json"),
+        );
+    }
+    paths
 }
 
 fn execute_team_api(parsed: ParsedTeamApiArgs, cwd: &Path) -> TeamExecution {
@@ -2946,7 +3002,7 @@ fn transition_team_task_status(
 ) -> Result<String, TeamError> {
     if !matches!(
         (from, to),
-        ("in_progress", "completed") | ("in_progress", "failed")
+        ("in_progress", "completed" | "failed")
     ) {
         return Ok("{\"ok\":false,\"error\":\"invalid_transition\"}".to_string());
     }
@@ -4652,6 +4708,107 @@ mod tests {
         let events = fs::read_to_string(cwd.join(".omx/state/team/fix-all/events/events.ndjson"))
             .expect("read events");
         assert!(events.contains("linked_ralph_bootstrap"));
+    }
+
+    #[test]
+    fn shutdown_terminalizes_matching_root_and_session_linked_ralph_state() {
+        let cwd = temp_dir("shutdown-linked-ralph");
+        let state_root = cwd.join(".omx/state");
+        let session_dir = state_root.join("sessions/sess-shutdown");
+        let team_root = state_root.join("team/fixture-team");
+        fs::create_dir_all(team_root.join("tasks")).expect("create team tasks");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        fs::write(
+            state_root.join("session.json"),
+            "{\"session_id\":\"sess-shutdown\"}\n",
+        )
+        .expect("write session id");
+        fs::write(
+            team_root.join("config.json"),
+            concat!(
+                "{\n",
+                "  \"name\": \"fixture-team\",\n",
+                "  \"worker_launch_mode\": \"prompt\",\n",
+                "  \"workers\": [{\"name\": \"worker-1\"}]\n",
+                "}\n"
+            ),
+        )
+        .expect("write config");
+        fs::write(
+            team_root.join("tasks/task-1.json"),
+            "{\"status\":\"completed\"}\n",
+        )
+        .expect("write task");
+        fs::write(
+            state_root.join("ralph-state.json"),
+            concat!(
+                "{\n",
+                "  \"active\": true,\n",
+                "  \"linked_team\": true,\n",
+                "  \"team_name\": \"fixture-team\",\n",
+                "  \"current_phase\": \"executing\"\n",
+                "}\n"
+            ),
+        )
+        .expect("write root ralph");
+        fs::write(
+            session_dir.join("ralph-state.json"),
+            concat!(
+                "{\n",
+                "  \"active\": true,\n",
+                "  \"linked_team\": true,\n",
+                "  \"team_name\": \"fixture-team\",\n",
+                "  \"current_phase\": \"executing\"\n",
+                "}\n"
+            ),
+        )
+        .expect("write session ralph");
+
+        run_team(
+            &["shutdown".to_string(), "fixture-team".to_string()],
+            &cwd,
+            &BTreeMap::new(),
+        )
+        .expect("shutdown linked team");
+
+        let root_ralph =
+            fs::read_to_string(state_root.join("ralph-state.json")).expect("read root ralph");
+        let session_ralph =
+            fs::read_to_string(session_dir.join("ralph-state.json")).expect("read session ralph");
+        assert_eq!(
+            extract_json_value(&root_ralph, "active").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            extract_json_value(&root_ralph, "current_phase")
+                .as_deref()
+                .map(|value| value.trim_matches('"')),
+            Some("complete")
+        );
+        assert_eq!(
+            extract_json_value(&root_ralph, "linked_team_terminal_phase")
+                .as_deref()
+                .map(|value| value.trim_matches('"')),
+            Some("complete")
+        );
+        assert!(extract_json_value(&root_ralph, "completed_at").is_some());
+        assert_eq!(
+            extract_json_value(&session_ralph, "active").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            extract_json_value(&session_ralph, "current_phase")
+                .as_deref()
+                .map(|value| value.trim_matches('"')),
+            Some("complete")
+        );
+        assert_eq!(
+            extract_json_value(&session_ralph, "linked_team_terminal_phase")
+                .as_deref()
+                .map(|value| value.trim_matches('"')),
+            Some("complete")
+        );
+        assert!(extract_json_value(&session_ralph, "completed_at").is_some());
     }
 
     #[cfg(unix)]

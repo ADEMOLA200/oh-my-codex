@@ -50,6 +50,34 @@ async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, 'utf-8')) as T;
 }
 
+async function withoutTeamWorkerEnv<T>(fn: () => T | Promise<T>): Promise<T> {
+  const workerScopedEnvKeys = [
+    'OMX_TEAM_WORKER',
+    'OMX_TEAM_WORKER_INDEX',
+    'OMX_TEAM_STATE_ROOT',
+    'OMX_TEAM_LEADER_CWD',
+    'OMX_TEAM_TASK',
+    'OMX_TEAM_WORKER_LAUNCH_ARGS',
+    'OMX_TEAM_WORKER_CLI_MAP',
+    'OMX_TEAM_WORKTREE_PATH',
+    'OMX_TEAM_WORKTREE_BRANCH',
+    'OMX_TEAM_WORKTREE_DETACHED',
+  ] as const;
+  const previous = new Map(workerScopedEnvKeys.map((key) => [key, process.env[key]]));
+  for (const key of workerScopedEnvKeys) {
+    delete process.env[key];
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const key of workerScopedEnvKeys) {
+      const value = previous.get(key);
+      if (typeof value === 'string') process.env[key] = value;
+      else delete process.env[key];
+    }
+  }
+}
+
 describe('notify-hook linked team -> ralph terminal sync', () => {
   it('syncs linked terminal state starting from a real omx team ralph launch', async () => {
     await withTempWorkingDir(async (cwd) => {
@@ -81,7 +109,7 @@ process.on('SIGTERM', () => process.exit(0));
 
         const teamTask = 'real launch linked notify sync';
         const teamName = parseTeamStartArgs(['ralph', '1:executor', teamTask]).parsed.teamName;
-        await teamCommand(['ralph', '1:executor', teamTask]);
+        await withoutTeamWorkerEnv(() => teamCommand(['ralph', '1:executor', teamTask]));
 
         const stateDir = join(cwd, '.omx', 'state');
         const teamStatePath = join(stateDir, 'team-state.json');

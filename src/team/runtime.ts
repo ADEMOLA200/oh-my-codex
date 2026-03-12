@@ -1,4 +1,4 @@
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { existsSync } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { performance } from 'perf_hooks';
@@ -104,6 +104,7 @@ import {
 } from './model-contract.js';
 import { resolveCanonicalTeamStateRoot } from './state-root.js';
 import { inferPhaseTargetFromTaskCounts, reconcilePhaseStateForMonitor } from './phase-controller.js';
+import { buildRebalanceDecisions } from './rebalance-policy.js';
 import { getTeamTmuxSessions } from '../notifications/tmux.js';
 import { hasStructuredVerificationEvidence } from '../verification/verifier.js';
 import { readModeState, updateModeState } from '../modes/base.js';
@@ -179,6 +180,79 @@ async function syncRootTeamModeStateOnTerminalPhase(
     }
 
     await updateModeState('team', updates, cwd);
+  } catch {
+    // Best-effort compatibility sync only.
+  }
+}
+
+function parseTeamWorkerEnv(raw: string | undefined): { teamName: string; workerName: string } | null {
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const match = /^([a-z0-9][a-z0-9-]{0,29})\/(worker-\d+)$/.exec(raw.trim());
+  if (!match) return null;
+  return { teamName: match[1], workerName: match[2] };
+}
+
+function stateRootToWorkingDirectory(stateRoot: string): string {
+  return dirname(dirname(resolve(stateRoot)));
+}
+
+function manifestNestedTeamsAllowed(manifest: Awaited<ReturnType<typeof readTeamManifestV2>>): boolean {
+  const legacyPolicy = manifest?.policy as { nested_teams_allowed?: boolean } | undefined;
+  return manifest?.governance?.nested_teams_allowed ?? legacyPolicy?.nested_teams_allowed ?? false;
+}
+
+function manifestCleanupRequiresAllWorkersInactive(
+  manifest: Awaited<ReturnType<typeof readTeamManifestV2>>,
+): boolean {
+  const legacyPolicy = manifest?.policy as { cleanup_requires_all_workers_inactive?: boolean } | undefined;
+  return manifest?.governance?.cleanup_requires_all_workers_inactive
+    ?? legacyPolicy?.cleanup_requires_all_workers_inactive
+    ?? true;
+}
+
+async function parentWorkerAllowsNestedTeams(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  const workerContext = parseTeamWorkerEnv(env.OMX_TEAM_WORKER);
+  if (!workerContext) return false;
+
+  const envStateRoot = env.OMX_TEAM_STATE_ROOT;
+  const parentCwd = typeof envStateRoot === 'string' && envStateRoot.trim() !== ''
+    ? stateRootToWorkingDirectory(envStateRoot.trim())
+    : cwd;
+  const parentManifest = await readTeamManifestV2(workerContext.teamName, parentCwd);
+  return manifestNestedTeamsAllowed(parentManifest);
+}
+
+async function syncLinkedRalphTerminalState(
+  teamName: string,
+  phase: TerminalPhase,
+  cwd: string,
+): Promise<void> {
+  try {
+    const teamState = await readModeState('team', cwd);
+    if (!teamState || teamState.linked_ralph !== true) return;
+
+    const stateTeamName = typeof teamState.team_name === 'string' ? teamState.team_name.trim() : '';
+    if (stateTeamName && stateTeamName !== teamName) return;
+
+    const ralphState = await readModeState('ralph', cwd);
+    if (!ralphState || ralphState.linked_team !== true) return;
+
+    const terminalAt = new Date().toISOString();
+    const updates: Record<string, unknown> = {
+      active: false,
+      current_phase: phase,
+      linked_team_terminal_phase: phase,
+      linked_team_terminal_at: terminalAt,
+      last_turn_at: terminalAt,
+    };
+    if (typeof ralphState.completed_at !== 'string' || !ralphState.completed_at) {
+      updates.completed_at = terminalAt;
+    }
+
+    await updateModeState('ralph', updates, cwd);
   } catch {
     // Best-effort compatibility sync only.
   }
@@ -518,6 +592,7 @@ function spawnPromptWorker(
   workerIndex: number,
   workerCwd: string,
   launchArgs: string[],
+  parentEnv: NodeJS.ProcessEnv,
   workerEnv: Record<string, string>,
   workerCli: 'codex' | 'claude' | 'gemini',
   initialPrompt?: string,
@@ -536,7 +611,7 @@ function spawnPromptWorker(
     processSpec.args,
     {
       cwd: workerCwd,
-      env: { ...process.env, ...processSpec.env },
+      env: { ...parentEnv, ...processSpec.env },
       stdio: ['pipe', 'ignore', 'ignore'],
     },
   );
@@ -631,17 +706,19 @@ export async function startTeam(
   cwd: string,
   options: TeamStartOptions = {},
 ): Promise<TeamRuntime> {
-  if (process.env.OMX_TEAM_WORKER) {
+  const launchEnv: NodeJS.ProcessEnv = { ...process.env };
+
+  if (launchEnv.OMX_TEAM_WORKER && !(await parentWorkerAllowsNestedTeams(cwd, launchEnv))) {
     throw new Error('nested_team_disallowed');
   }
 
-  const workerLaunchMode = resolveTeamWorkerLaunchMode(process.env);
+  const workerLaunchMode = resolveTeamWorkerLaunchMode(launchEnv);
   const displayMode = workerLaunchMode === 'interactive' ? 'split_pane' : 'auto';
   if (workerLaunchMode === 'interactive') {
     if (!isTmuxAvailable()) {
       throw new Error('Team mode requires tmux. Install with: apt install tmux / brew install tmux');
     }
-    if (!process.env.TMUX) {
+    if (!launchEnv.TMUX) {
       throw new Error('Team mode requires running inside tmux current leader pane');
     }
   }
@@ -692,7 +769,7 @@ export async function startTeam(
     }
   }
 
-  const leaderSessionId = await resolveLeaderSessionId(leaderCwd);
+  const leaderSessionId = await resolveLeaderSessionId(leaderCwd, launchEnv);
 
   // Topology guard: one active team per leader session/process context.
   const activeTeams = await findActiveTeams(leaderCwd, leaderSessionId);
@@ -709,14 +786,14 @@ export async function startTeam(
   let createdLeaderPaneId: string | undefined;
   let config: TeamConfig | null = null;
   const sharedWorkerLaunchArgs = resolveTeamWorkerLaunchArgs({
-    existingRaw: process.env.OMX_TEAM_WORKER_LAUNCH_ARGS,
+    existingRaw: launchEnv.OMX_TEAM_WORKER_LAUNCH_ARGS,
     fallbackModel: isLowComplexityAgentType(agentType)
-      ? resolveTeamLowComplexityDefaultModel(process.env.CODEX_HOME)
+      ? resolveTeamLowComplexityDefaultModel(launchEnv.CODEX_HOME)
       : undefined,
   });
-  const workerCliPlan = resolveTeamWorkerCliPlan(workerCount, sharedWorkerLaunchArgs, process.env);
-  const workerReadyTimeoutMs = resolveWorkerReadyTimeoutMs(process.env);
-  const skipWorkerReadyWait = shouldSkipWorkerReadyWait(process.env);
+  const workerCliPlan = resolveTeamWorkerCliPlan(workerCount, sharedWorkerLaunchArgs, launchEnv);
+  const workerReadyTimeoutMs = resolveWorkerReadyTimeoutMs(launchEnv);
+  const skipWorkerReadyWait = shouldSkipWorkerReadyWait(launchEnv);
 
   try {
     // 3. Init state directory + config
@@ -727,7 +804,7 @@ export async function startTeam(
       workerCount,
       leaderCwd,
       DEFAULT_MAX_WORKERS,
-      { ...process.env, OMX_TEAM_DISPLAY_MODE: displayMode, OMX_TEAM_WORKER_LAUNCH_MODE: workerLaunchMode },
+      { ...launchEnv, OMX_TEAM_DISPLAY_MODE: displayMode, OMX_TEAM_WORKER_LAUNCH_MODE: workerLaunchMode },
       {
         leader_cwd: leaderCwd,
         team_state_root: teamStateRoot,
@@ -807,7 +884,7 @@ export async function startTeam(
       );
       const preferredReasoning = resolveAgentReasoningEffort(workerRole) ?? resolveAgentReasoningEffort(agentType);
       const workerLaunchArgs = resolveWorkerLaunchArgsFromEnv(
-        process.env,
+        launchEnv,
         agentType,
         undefined,
         preferredReasoning,
@@ -891,6 +968,7 @@ export async function startTeam(
           i,
           startup.cwd || leaderCwd,
           startup.launchArgs || sharedWorkerLaunchArgs,
+          launchEnv,
           startup.env || {},
           startup.workerCli || workerCliPlan[i - 1],
           startup.initialPrompt,
@@ -1134,7 +1212,8 @@ export async function monitorTeam(teamName: string, cwd: string): Promise<TeamSn
   const config = await readTeamConfig(sanitized, cwd);
   if (!config) return null;
   const manifest = await readTeamManifestV2(sanitized, cwd);
-  const dispatchPolicy = resolveDispatchPolicy(manifest?.policy, config.worker_launch_mode);
+  const effectiveWorkerLaunchMode = manifest?.policy?.worker_launch_mode ?? config.worker_launch_mode;
+  const dispatchPolicy = resolveDispatchPolicy(manifest?.policy, effectiveWorkerLaunchMode);
   const previousSnapshot = await readMonitorSnapshot(sanitized, cwd);
 
   const sessionName = config.tmux_session ?? config.runtime_session_id;
@@ -1167,7 +1246,7 @@ export async function monitorTeam(teamName: string, cwd: string): Promise<TeamSn
   const workerScanStartMs = performance.now();
   const workerSignals = await Promise.all(
     config.workers.map(async (worker) => {
-      const alive = config.worker_launch_mode === 'prompt'
+      const alive = effectiveWorkerLaunchMode === 'prompt'
         ? isPromptWorkerAlive(config, worker)
         : isWorkerAlive(sessionName, worker.index, worker.pane_id);
       const [status, heartbeat] = await Promise.all([
@@ -1242,7 +1321,7 @@ export async function monitorTeam(teamName: string, cwd: string): Promise<TeamSn
 
   const allTasksTerminal = taskCounts.pending === 0 && taskCounts.blocked === 0 && taskCounts.in_progress === 0;
   const deadWorkerStall =
-    config.worker_launch_mode === 'prompt'
+    effectiveWorkerLaunchMode === 'prompt'
     && config.workers.length > 0
     && deadWorkers.length >= config.workers.length
     && !allTasksTerminal;
@@ -1257,6 +1336,33 @@ export async function monitorTeam(teamName: string, cwd: string): Promise<TeamSn
   await writeTeamPhaseState(sanitized, phaseState, cwd);
   const phase: TeamPhase | TerminalPhase = phaseState.current_phase;
   await syncRootTeamModeStateOnTerminalPhase(sanitized, phase, cwd);
+  if (phase === 'complete' || phase === 'failed' || phase === 'cancelled') {
+    await syncLinkedRalphTerminalState(sanitized, phase, cwd);
+  }
+
+  const rebalanceDecisions = buildRebalanceDecisions({
+    tasks: taskView,
+    workers: workers.map((worker) => ({
+      name: worker.name,
+      role: config.workers.find((candidate) => candidate.name === worker.name)?.role,
+      alive: worker.alive,
+      status: worker.status,
+    })),
+    reclaimedTaskIds,
+  });
+  for (const decision of rebalanceDecisions) {
+    if (decision.type !== 'assign' || !decision.taskId || !decision.workerName) {
+      recommendations.push(decision.reason);
+      continue;
+    }
+    try {
+      await assignTask(sanitized, decision.workerName, decision.taskId, cwd);
+      recommendations.push(`Assigned task-${decision.taskId} to ${decision.workerName}: ${decision.reason}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      recommendations.push(`Unable to assign task-${decision.taskId} to ${decision.workerName}: ${message}`);
+    }
+  }
 
   for (const taskId of reclaimedTaskIds) {
     recommendations.push(`Reclaimed expired claim for task-${taskId}`);
@@ -1265,7 +1371,7 @@ export async function monitorTeam(teamName: string, cwd: string): Promise<TeamSn
     recommendations.push('All workers are dead while work remains; mark the team failed or restart with fresh workers.');
   }
 
-  await emitMonitorDerivedEvents(sanitized, taskView, workers, previousSnapshot, config.worker_launch_mode, cwd);
+  await emitMonitorDerivedEvents(sanitized, taskView, workers, previousSnapshot, effectiveWorkerLaunchMode, cwd);
   const mailboxDeliveryStartMs = performance.now();
   const mailboxNotifiedByMessageId = await deliverPendingMailboxMessages(
     sanitized,
@@ -1364,9 +1470,13 @@ export async function assignTask(
   }
   const config = await readTeamConfig(sanitized, cwd);
   if (!config) throw new Error(`Team ${sanitized} not found`);
+  const effectiveWorkerLaunchMode = manifest?.policy?.worker_launch_mode ?? config.worker_launch_mode;
+  const dispatchConfig = effectiveWorkerLaunchMode === config.worker_launch_mode
+    ? config
+    : { ...config, worker_launch_mode: effectiveWorkerLaunchMode };
   const workerInfo = config.workers.find(w => w.name === workerName);
   if (!workerInfo) throw new Error(`Worker ${workerName} not found in team`);
-  const dispatchPolicy = resolveDispatchPolicy(manifest?.policy, config.worker_launch_mode);
+  const dispatchPolicy = resolveDispatchPolicy(manifest?.policy, effectiveWorkerLaunchMode);
 
   const claim = await claimTask(sanitized, taskId, workerName, task.version ?? 1, cwd);
   if (!claim.ok) {
@@ -1385,7 +1495,7 @@ export async function assignTask(
     for (let attempt = 1; attempt <= maxAssignRetries; attempt++) {
       outcome = await dispatchCriticalInboxInstruction({
         teamName: sanitized,
-        config,
+        config: dispatchConfig,
         workerName,
         workerIndex: workerInfo.index,
         paneId: workerInfo.pane_id,
@@ -1400,9 +1510,9 @@ export async function assignTask(
         inboxCorrelationKey: `assign:${taskId}:${workerName}`,
       });
       if (outcome.ok) break;
-      if (attempt < maxAssignRetries && config.worker_launch_mode === 'interactive' && config.tmux_session) {
-        if (dismissTrustPromptIfPresent(config.tmux_session, workerInfo.index, workerInfo.pane_id)) {
-          waitForWorkerReady(config.tmux_session, workerInfo.index, 15_000, workerInfo.pane_id);
+      if (attempt < maxAssignRetries && dispatchConfig.worker_launch_mode === 'interactive' && dispatchConfig.tmux_session) {
+        if (dismissTrustPromptIfPresent(dispatchConfig.tmux_session, workerInfo.index, workerInfo.pane_id)) {
+          waitForWorkerReady(dispatchConfig.tmux_session, workerInfo.index, 15_000, workerInfo.pane_id);
         } else {
           await new Promise<void>(r => setTimeout(r, assignRetryDelayS * 1000));
         }
@@ -1472,6 +1582,8 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
     restoreTeamModelInstructionsFile(sanitized);
     return;
   }
+  const manifest = await readTeamManifestV2(sanitized, cwd);
+  const cleanupRequiresAllWorkersInactive = manifestCleanupRequiresAllWorkersInactive(manifest);
 
   if (!force) {
     const allTasks = await listTasks(sanitized, cwd);
@@ -1484,14 +1596,18 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
       failed: allTasks.filter((t) => t.status === 'failed').length,
       allowed: false,
     };
-    gate.allowed = gate.pending === 0 && gate.blocked === 0 && gate.in_progress === 0 && gate.failed === 0;
+    gate.allowed = gate.failed === 0
+      && (
+        !cleanupRequiresAllWorkersInactive
+        || (gate.pending === 0 && gate.blocked === 0 && gate.in_progress === 0)
+      );
 
     await appendTeamEvent(
       sanitized,
       {
         type: 'shutdown_gate',
         worker: 'leader-fixed',
-        reason: `allowed=${gate.allowed} total=${gate.total} pending=${gate.pending} blocked=${gate.blocked} in_progress=${gate.in_progress} completed=${gate.completed} failed=${gate.failed}${ralph ? ' policy=ralph' : ''}`,
+        reason: `allowed=${gate.allowed} total=${gate.total} pending=${gate.pending} blocked=${gate.blocked} in_progress=${gate.in_progress} completed=${gate.completed} failed=${gate.failed}${ralph ? ' policy=ralph' : ''}${cleanupRequiresAllWorkersInactive ? '' : ' cleanup_override=active_work_allowed'}`,
       },
       cwd,
     ).catch(() => {});
@@ -1527,7 +1643,6 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
   }
 
   const sessionName = config.tmux_session ?? config.runtime_session_id;
-  const manifest = await readTeamManifestV2(sanitized, cwd);
   const dispatchPolicy = resolveDispatchPolicy(manifest?.policy, config.worker_launch_mode);
   const shutdownRequestTimes = new Map<string, string>();
 
@@ -1695,6 +1810,8 @@ export async function shutdownTeam(teamName: string, cwd: string, options: Shutd
     ).catch(() => {});
   }
 
+  await syncLinkedRalphTerminalState(sanitized, ralph ? 'cancelled' : 'complete', cwd);
+
   const cleanupErrors: string[] = [];
   const provisionedWorktrees = collectProvisionedShutdownWorktrees(config);
   if (provisionedWorktrees.length > 0) {
@@ -1803,8 +1920,11 @@ async function findActiveTeams(cwd: string, leaderSessionId: string): Promise<st
   return active;
 }
 
-async function resolveLeaderSessionId(cwd: string): Promise<string> {
-  const fromEnv = process.env.OMX_SESSION_ID || process.env.CODEX_SESSION_ID || process.env.SESSION_ID;
+async function resolveLeaderSessionId(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+  const fromEnv = env.OMX_SESSION_ID || env.CODEX_SESSION_ID || env.SESSION_ID;
   if (fromEnv && fromEnv.trim() !== '') return fromEnv.trim();
 
   const p = join(cwd, '.omx', 'state', 'session.json');

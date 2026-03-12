@@ -5,6 +5,8 @@
  */
 
 import { execFileSync, execSync } from "child_process";
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 
 const TMUX_PANE_TARGET_RE = /^%\d+$/;
 const DEFAULT_CAPTURE_LINES = 12;
@@ -14,6 +16,28 @@ function shouldUsePidFallback(): boolean {
   return process.env.OMX_TMUX_PID_FALLBACK === "1";
 }
 
+function envTruthy(key: string): boolean {
+  const v = process.env[key];
+  return v === '1' || (v || '').toLowerCase() === 'true' || (v || '').toLowerCase() === 'yes';
+}
+
+function isTmuxAllowed(): boolean {
+  if (envTruthy('OMX_NO_TMUX') || envTruthy('OMX_LAUNCH_NO_TMUX') || (process.env.OMX_LAUNCH_MODE || '').toLowerCase() === 'native') {
+    return false;
+  }
+  try {
+    const teamStatePath = join(process.cwd(), '.omx', 'state', 'team-state.json');
+    if (existsSync(teamStatePath)) {
+      const raw = readFileSync(teamStatePath, 'utf-8');
+      const parsed = JSON.parse(raw) as { no_tmux?: boolean };
+      if (parsed && parsed.no_tmux === true) return false;
+    }
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
 /**
  * Get the current tmux session name.
  * First checks $TMUX env, then falls back to finding the tmux session
@@ -21,6 +45,7 @@ function shouldUsePidFallback(): boolean {
  * inherit $TMUX).
  */
 export function getCurrentTmuxSession(): string | null {
+  if (!isTmuxAllowed()) return null;
   // Fast path: $TMUX is set (we're directly inside tmux)
   if (process.env.TMUX) {
     try {
@@ -112,6 +137,7 @@ function detectTmuxSessionByPid(): string | null {
  * List active omx-team tmux sessions for a given team.
  */
 export function getTeamTmuxSessions(teamName: string): string[] {
+  if (!isTmuxAllowed()) return [];
   const sanitized = teamName.replace(/[^a-zA-Z0-9-]/g, "");
   if (!sanitized) return [];
 
@@ -137,6 +163,7 @@ export function getTeamTmuxSessions(teamName: string): string[] {
  * Returns null if capture fails or tmux is not available.
  */
 export function captureTmuxPane(paneId?: string | null, lines: number = 12): string | null {
+  if (!isTmuxAllowed()) return null;
   const target = paneId || process.env.TMUX_PANE;
   if (!target) return null;
   if (!process.env.TMUX && !paneId) return null;
@@ -162,6 +189,7 @@ export function captureTmuxPane(paneId?: string | null, lines: number = 12): str
  * Returns null if not in tmux.
  */
 export function formatTmuxInfo(): string | null {
+  if (!isTmuxAllowed()) return null;
   const session = getCurrentTmuxSession();
   if (!session) return null;
   return `tmux: ${session}`;
@@ -173,6 +201,7 @@ export function formatTmuxInfo(): string | null {
  * then falls back to PID-based detection.
  */
 export function getCurrentTmuxPaneId(): string | null {
+  if (!isTmuxAllowed()) return null;
   // Fast path: $TMUX_PANE is set
   const envPane = process.env.TMUX_PANE;
   if (process.env.TMUX && envPane && /^%\d+$/.test(envPane)) return envPane;

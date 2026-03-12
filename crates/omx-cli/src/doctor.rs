@@ -1176,9 +1176,11 @@ mod tests {
         let stdout = String::from_utf8(execution.stdout).expect("utf8 stdout");
         assert_eq!(execution.exit_code, 0);
         assert!(stdout.contains("[OK] Codex CLI: installed (codex-test-version)"));
-        assert!(stdout.contains(
-            "[!!] Node.js: not found (optional; only needed for transitional JS flows)"
-        ));
+        assert!(
+            stdout.contains(
+                "[!!] Node.js: not found (optional; only needed for transitional JS flows)"
+            )
+        );
     }
 
     #[test]

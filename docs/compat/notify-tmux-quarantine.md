@@ -1,0 +1,44 @@
+# Notify-hook / tmux compatibility quarantine
+
+Goal: make tmux/Node notify-hook behavior explicitly compatibility-only for the cargo/native-first milestone. Nothing in this inventory is required for normal product verification.
+
+Classification legend:
+- PORT: port to Rust/native if still needed for product authority
+- COMPAT-ONLY: keep for optional tmux/Node flows; not part of product proof
+- DELETE: remove after cutover when no longer referenced
+
+## Inventory and provisional classification (v0)
+
+scripts/notify-hook/
+- team-worker.js — COMPAT-ONLY
+- team-leader-nudge.js — COMPAT-ONLY
+- tmux-injection.js — COMPAT-ONLY
+- team-dispatch.js — COMPAT-ONLY
+- auto-nudge.js — COMPAT-ONLY
+- payload-parser.js — COMPAT-ONLY
+- process-runner.js — COMPAT-ONLY
+- state-io.js — COMPAT-ONLY
+- operational-events.js — COMPAT-ONLY
+- linked-sync.js — COMPAT-ONLY
+- log.js — COMPAT-ONLY
+- utils.js — COMPAT-ONLY
+- visual-verdict.js — COMPAT-ONLY
+
+src/notifications/
+- tmux.ts — COMPAT-ONLY
+- tmux-detector.ts — COMPAT-ONLY
+- (other modules: dispatcher.ts, notifier.ts, formatter.ts, reply-listener.ts, config.ts, etc.) — COMPAT-ONLY for 0.x cargo-only milestone; candidate PORT or DELETE later based on actual native runtime needs
+
+src/hooks/extensibility/
+- sdk.ts — COMPAT-ONLY (dev tooling; not product-authoritative for the migration milestone)
+
+## Fencing approach (initial)
+- Documentation: this file + README mark tmux/notify surfaces as compatibility-only.
+- Runtime: tmux support is DISABLED by default. Enable explicitly with `OMX_COMPAT_TMUX=1`.
+  - src/notifications/tmux-detector.ts now returns `false` from `isTmuxAvailable()` unless `OMX_COMPAT_TMUX` is truthy.
+- Tests: any JS tests for these surfaces move under a compat-only test lane and are never considered a product gate.
+
+## Exit criteria for this lane
+- No tmux/notify JS surface is ambiguously product-authoritative.
+- Native-first product behavior and verification do not require the above JS files.
+- When a file becomes unused for compat, mark as DELETE and remove in a follow-up PR.

@@ -100,3 +100,16 @@ SDK surface includes:
 Plugin dispatch and plugin logs are written to:
 
 - `.omx/logs/hooks-YYYY-MM-DD.jsonl`
+
+## Native-first surfaces and tmux compatibility
+
+OMX is native-first. Plugins should target abstract runtime surfaces instead of assuming tmux panes:
+
+- Consume team layout/runtime metadata emitted by the native runtime; see docs/rust/team-layout-runtime-metadata.md.
+- Treat tmux operations (`sdk.tmux.*`) as optional compatibility helpers, not as the primary control surface.
+- Prefer emitting structured events or writing state over manipulating panes directly.
+- When tmux is not present, plugins must still behave gracefully (no noisy ENOENT failures).
+
+Compatibility fence:
+- tmux-backed flows are supported when explicitly requested by the operator or integration.
+- Native HUD (`omx hud --watch`) and prompt-mode team runs (`omx team ...`) should remain fully functional without tmux.

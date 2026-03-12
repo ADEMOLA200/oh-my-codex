@@ -12,6 +12,7 @@ pub mod session;
 pub mod session_state;
 pub mod setup;
 pub mod status;
+pub mod surface_runtime;
 pub mod team;
 pub mod team_layout;
 pub mod tmux_hook;
@@ -22,61 +23,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 pub const BINARY_NAME: &str = "omx";
-pub const HELP_OUTPUT: &str = r#"
-oh-my-codex (omx) - Multi-agent orchestration for Codex CLI
-
-Usage:
-  omx           Launch the native OMX/Codex path (HUD auto-attaches only when already inside tmux)
-  omx setup     Install skills, prompts, MCP servers, and AGENTS.md
-  omx uninstall Remove OMX configuration and clean up installed artifacts
-  omx doctor    Check installation health
-  omx doctor --team  Check team/swarm runtime health diagnostics
-  omx ask       Ask local provider CLI (claude|gemini) and write artifact output
-  omx session   Search prior local session transcripts and history artifacts
-  omx agents-init [path]
-                Bootstrap lightweight AGENTS.md files for a repo/subtree
-  omx deepinit [path]
-                Alias for agents-init (lightweight AGENTS bootstrap only)
-  omx team      Start prompt-mode team workers (default path; no tmux required)
-                and bootstrap inbox/task state
-  omx ralph     Launch Codex with ralph persistence mode active
-  omx version   Show version information
-  omx tmux-hook Manage optional tmux compatibility workflow (init|status|validate|test)
-  omx hooks     Manage optional hook plugin workflow (init|status|validate|test)
-  omx hud       Show HUD statusline (--watch, --json, --preset=NAME)
-  omx help      Show this help message
-  omx status    Show active modes and state
-  omx cancel    Cancel active execution modes
-  omx reasoning Show or set model reasoning effort (low|medium|high|xhigh)
-
-Options:
-  --yolo        Launch Codex in yolo mode (shorthand for: omx launch --yolo)
-  --high        Launch Codex with high reasoning effort
-                (shorthand for: -c model_reasoning_effort="high")
-  --xhigh       Launch Codex with xhigh reasoning effort
-                (shorthand for: -c model_reasoning_effort="xhigh")
-  --madmax      DANGEROUS: bypass Codex approvals and sandbox
-                (alias for --dangerously-bypass-approvals-and-sandbox)
-  --spark       Use the Codex spark model (~1.3x faster) for team workers only
-                Workers get the configured low-complexity team model; leader model unchanged
-  --madmax-spark  spark model for workers + bypass approvals for leader and workers
-                (shorthand for: --spark --madmax)
-  --notify-temp  Enable temporary notification routing for this run/session only
-  --discord      Select Discord provider for temporary notification mode
-  --slack        Select Slack provider for temporary notification mode
-  --telegram     Select Telegram provider for temporary notification mode
-  --custom <name>
-                Select custom/OpenClaw gateway name for temporary notification mode
-  -w, --worktree[=<name>]
-                Launch Codex in a git worktree (detached when no name is given)
-  --force       Force reinstall (overwrite existing files)
-  --dry-run     Show what would be done without doing it
-  --keep-config Skip config.toml cleanup during uninstall
-  --purge       Remove .omx/ cache directory during uninstall
-  --verbose     Show detailed output
-  --scope       Setup scope for "omx setup" only:
-                user | project
-"#;
+pub const HELP_OUTPUT: &str = include_str!("../../../src/compat/fixtures/help.stdout.txt");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandTarget {

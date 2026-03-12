@@ -10,6 +10,11 @@ import { sleepSync } from '../utils/sleep.js';
 import { resolveCommandPathForPlatform } from '../utils/platform-command.js';
 
 export function isTmuxAvailable(): boolean {
+  // Compatibility quarantine: tmux support is disabled by default for the
+  // cargo/native-first milestone. Enable explicitly with OMX_COMPAT_TMUX=1|true.
+  const v = (process.env.OMX_COMPAT_TMUX || '').toLowerCase();
+  const compatEnabled = v === '1' || v === 'true' || v === 'yes';
+  if (!compatEnabled) return false;
   return resolveCommandPathForPlatform('tmux') !== null;
 }
 

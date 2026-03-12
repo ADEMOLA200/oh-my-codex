@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -150,6 +150,21 @@ exit 0
 }
 
 describe('notify-fallback watcher', () => {
+  const previousWorkerEnv = process.env.OMX_TEAM_WORKER;
+  const previousStateRootEnv = process.env.OMX_TEAM_STATE_ROOT;
+
+  beforeEach(() => {
+    delete process.env.OMX_TEAM_WORKER;
+    delete process.env.OMX_TEAM_STATE_ROOT;
+  });
+
+  afterEach(() => {
+    if (typeof previousWorkerEnv === 'string') process.env.OMX_TEAM_WORKER = previousWorkerEnv;
+    else delete process.env.OMX_TEAM_WORKER;
+    if (typeof previousStateRootEnv === 'string') process.env.OMX_TEAM_STATE_ROOT = previousStateRootEnv;
+    else delete process.env.OMX_TEAM_STATE_ROOT;
+  });
+
   it('one-shot mode forwards only recent task_complete events', async () => {
     const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-once-'));
     const tempHome = await mkdtemp(join(tmpdir(), 'omx-fallback-home-'));

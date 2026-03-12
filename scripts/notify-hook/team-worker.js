@@ -4,7 +4,7 @@
 
 import { readFile, writeFile, mkdir, appendFile, rename, stat } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, resolve as resolvePath } from 'path';
+import { join, resolve as resolvePath, sep } from 'path';
 import { asNumber, safeString, isTerminalPhase } from './utils.js';
 import { readJsonIfExists } from './state-io.js';
 import { runProcess } from './process-runner.js';
@@ -26,21 +26,48 @@ async function readTeamStateRootFromJson(path) {
   }
 }
 
+function isSameOrDescendantPath(candidate, root) {
+  const resolvedCandidate = resolvePath(candidate);
+  const resolvedRoot = resolvePath(root);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${sep}`);
+}
+
+function shouldUseExplicitStateRoot(cwd, explicitStateRoot, teamName) {
+  const resolvedRoot = resolvePath(cwd, explicitStateRoot);
+  if (!existsSync(resolvedRoot)) return true;
+
+  const leaderCwd = safeString(process.env.OMX_TEAM_LEADER_CWD || '').trim();
+  const leaderMatches = leaderCwd && isSameOrDescendantPath(cwd, leaderCwd);
+  if (leaderMatches) return true;
+
+  const inferredLeaderCwd = resolvePath(resolvedRoot, '..', '..');
+  const inferredLeaderMatches = isSameOrDescendantPath(cwd, inferredLeaderCwd);
+  if (inferredLeaderMatches) return true;
+
+  const localTeamRoot = join(cwd, '.omx', 'state', 'team', teamName);
+  if (existsSync(localTeamRoot)) return false;
+  return existsSync(join(resolvedRoot, 'team', teamName));
+}
+
 export async function resolveTeamStateDirForWorker(cwd, parsedTeamWorker) {
+  const teamName = parsedTeamWorker.teamName;
+  const workerName = parsedTeamWorker.workerName;
   const explicitStateRoot = safeString(process.env.OMX_TEAM_STATE_ROOT || '').trim();
-  if (explicitStateRoot) {
+  if (explicitStateRoot && shouldUseExplicitStateRoot(cwd, explicitStateRoot, teamName)) {
     return resolvePath(cwd, explicitStateRoot);
   }
 
-  const teamName = parsedTeamWorker.teamName;
-  const workerName = parsedTeamWorker.workerName;
   const leaderCwd = safeString(process.env.OMX_TEAM_LEADER_CWD || '').trim();
+  const localStateDir = join(cwd, '.omx', 'state');
+  const localTeamRoot = join(localStateDir, 'team', teamName);
 
   const candidateStateDirs = [];
   if (leaderCwd) {
-    candidateStateDirs.push(join(resolvePath(leaderCwd), '.omx', 'state'));
+    if (isSameOrDescendantPath(cwd, leaderCwd) || !existsSync(localTeamRoot)) {
+      candidateStateDirs.push(join(resolvePath(leaderCwd), '.omx', 'state'));
+    }
   }
-  candidateStateDirs.push(join(cwd, '.omx', 'state'));
+  candidateStateDirs.push(localStateDir);
 
   for (const candidateStateDir of candidateStateDirs) {
     const teamRoot = join(candidateStateDir, 'team', teamName);

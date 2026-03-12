@@ -1,8 +1,10 @@
-
 oh-my-codex (omx) - Multi-agent orchestration for Codex CLI
 
 Usage:
-  omx           Launch the native OMX/Codex path (HUD auto-attaches only when already inside tmux)
+  omx           Launch the native OMX/Codex path
+                (native-first; tmux is optional and only used when already inside tmux or explicitly enabled.
+                 HUD auto-attaches only when already inside tmux; use `omx hud` for native inline/watch;
+                 detached tmux session available with --tmux or OMX_LAUNCH_TMUX=1)
   omx setup     Install skills, prompts, MCP servers, and AGENTS.md
   omx uninstall Remove OMX configuration and clean up installed artifacts
   omx doctor    Check installation health
@@ -53,3 +55,12 @@ Options:
   --verbose     Show detailed output
   --scope       Setup scope for "omx setup" only:
                 user | project
+
+Runtime selection (native-first):
+  --tmux        Opt in to tmux compatibility backend for this launch
+  --no-tmux     Force native runtime even when already inside tmux
+
+  Environment variables (evaluated in this order):
+    OMX_LAUNCH_TMUX=1     Opt in to tmux compatibility backend
+    OMX_LAUNCH_MODE=tmux  Opt in to tmux; use "native" to force native
+    OMX_NO_TMUX=1         Force native runtime (equivalent to --no-tmux)

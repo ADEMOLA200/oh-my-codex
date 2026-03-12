@@ -416,8 +416,8 @@ mod tests {
             fs::read_to_string(cwd.join(".omx/setup-scope.json")).expect("scope file"),
             "{\"scope\":\"user\"}\n"
         );
-        let config = fs::read_to_string(PathBuf::from("/tmp/home/.codex/config.toml"))
-            .expect("config file");
+        let config =
+            fs::read_to_string(PathBuf::from("/tmp/home/.codex/config.toml")).expect("config file");
         assert!(config.contains("[agents.executor]"));
         assert!(!config.contains("[mcp_servers.omx_state]"));
     }

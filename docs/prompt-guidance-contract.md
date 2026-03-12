@@ -196,7 +196,8 @@ node --test \
 For broader prompt or skill changes, prefer the full suite:
 
 ```bash
-npm test
+cargo test --workspace
+npm run test:node    # optional compatibility-only suite
 ```
 
 ## References

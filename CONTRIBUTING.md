@@ -4,14 +4,16 @@ Thanks for contributing.
 
 ## Development setup
 
+- Rust (stable toolchain)
 - Node.js >= 20
 - npm
 
 ```bash
 npm install
+cargo test --workspace
 npm run lint
 npm run build
-npm test
+npm run test:compat:node   # optional compatibility-only gate
 ```
 
 For local CLI testing:
@@ -39,7 +41,8 @@ When validating team/state changes, run this sequence locally:
 ```bash
 npm run build
 node --test dist/team/__tests__/state.test.js dist/hooks/__tests__/notify-hook-cross-worktree-heartbeat.test.js
-npm test
+cargo test --workspace
+npm run test:compat:node   # optional compatibility-only check
 ```
 
 If you were recently in a team worker session, clear team env vars first so tests do not inherit worker-specific state roots:
@@ -98,9 +101,10 @@ docs: clarify setup steps for Codex CLI users
 ## Pull request checklist
 
 - [ ] Scope is focused and clearly described
+- [ ] `cargo test --workspace` passes
 - [ ] `npm run build` passes
-- [ ] `npm test` passes
 - [ ] `npm run lint` passes
+- [ ] `npm run test:compat:node` passes when compatibility surfaces were touched
 - [ ] Documentation updated when behavior changed
 - [ ] No unrelated formatting/refactor churn
 

@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -84,6 +84,21 @@ exit 0
 }
 
 describe('notify-hook team dispatch consumer', () => {
+  const previousWorkerEnv = process.env.OMX_TEAM_WORKER;
+  const previousStateRootEnv = process.env.OMX_TEAM_STATE_ROOT;
+
+  beforeEach(() => {
+    delete process.env.OMX_TEAM_WORKER;
+    delete process.env.OMX_TEAM_STATE_ROOT;
+  });
+
+  afterEach(() => {
+    if (typeof previousWorkerEnv === 'string') process.env.OMX_TEAM_WORKER = previousWorkerEnv;
+    else delete process.env.OMX_TEAM_WORKER;
+    if (typeof previousStateRootEnv === 'string') process.env.OMX_TEAM_STATE_ROOT = previousStateRootEnv;
+    else delete process.env.OMX_TEAM_STATE_ROOT;
+  });
+
   it('marks pending request as notified and preserves mailbox notified_at semantics', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'omx-hook-team-dispatch-'));
     try {

@@ -102,6 +102,25 @@ function runTmux(args: string[]): { ok: true; stdout: string } | { ok: false; st
   return { ok: true, stdout: (result.stdout || '').trim() };
 }
 
+/**
+ * Compatibility fence: disable tmux backend when native runtime declares no-tmux.
+ * Reads `.omx/state/team-state.json` and honors `no_tmux: true`.
+ * Also honors `OMX_NO_TMUX=1` for explicit opt-out.
+ */
+async function isTmuxBackendAllowed(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (env.OMX_NO_TMUX === '1') return false;
+  try {
+    const raw = await readFile(join(cwd, '.omx', 'state', 'team-state.json'), 'utf-8');
+    const data = JSON.parse(raw) as { no_tmux?: boolean; layout_mode?: string };
+    if (data && (data.no_tmux === true || data.layout_mode === 'native_equivalent')) {
+      return false;
+    }
+  } catch {
+    // ignore — absence means no explicit fence
+  }
+  return true;
+}
+
 function resolveTmuxTarget(options: HookPluginSendKeysOptions): HookPluginSendKeysResult {
   const paneId = typeof options.paneId === 'string' ? options.paneId.trim() : '';
   if (paneId) {
@@ -145,6 +164,11 @@ async function sendTmuxKeys(
   const marker = process.env.OMX_HOOK_PLUGIN_LOOP_MARKER || '[OMX_HOOK_PLUGIN]';
   if (marker && text.includes(marker)) {
     return { ok: false, reason: 'loop_guard_input_marker' };
+  }
+
+  // Respect native runtime opting out of tmux
+  if (!(await isTmuxBackendAllowed(context.cwd))) {
+    return { ok: false, reason: 'no_backend' };
   }
 
   const targetResolution = resolveTmuxTarget(options);

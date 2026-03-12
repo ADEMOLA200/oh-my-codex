@@ -1,6 +1,7 @@
 use crate::session_state::{
     extract_json_bool_field, extract_json_string_field, read_current_session_id, resolve_state_root,
 };
+use crate::surface_runtime::{NativeBackend, SurfaceRuntime};
 use crate::team_layout::{
     HudModeOverride, find_active_prompt_team_root, sync_prompt_layout_from_state,
 };
@@ -132,7 +133,9 @@ pub fn run_hud(args: &[String], cwd: &Path, help_output: &str) -> Result<HudExec
         });
     }
 
-    sync_active_team_layout_for_hud(cwd, flags.watch);
+    let runtime = SurfaceRuntime::new(NativeBackend::new("hud"));
+    let hud_surface = runtime.hud_surface(flags.watch);
+    sync_active_team_layout_for_hud(cwd, &hud_surface);
 
     if flags.watch {
         run_hud_watch(cwd, flags)
@@ -156,12 +159,12 @@ pub fn run_hud(args: &[String], cwd: &Path, help_output: &str) -> Result<HudExec
     }
 }
 
-fn sync_active_team_layout_for_hud(cwd: &Path, watch: bool) {
+fn sync_active_team_layout_for_hud(cwd: &Path, hud_surface: &crate::surface_runtime::HudSurface) {
     let state_root = resolve_state_root(cwd, &BTreeMap::<OsString, OsString>::new());
     let Ok(Some(team_root)) = find_active_prompt_team_root(cwd, &state_root) else {
         return;
     };
-    let hud_mode = if watch {
+    let hud_mode = if hud_surface.watch {
         HudModeOverride::Watch
     } else {
         HudModeOverride::Inline
@@ -169,7 +172,11 @@ fn sync_active_team_layout_for_hud(cwd: &Path, watch: bool) {
     let _ = sync_prompt_layout_from_state(
         &team_root,
         &state_root,
-        if watch { "hud-watch" } else { "hud-render" },
+        if hud_surface.watch {
+            "hud-watch"
+        } else {
+            "hud-render"
+        },
         hud_mode,
         None,
     );
@@ -593,7 +600,7 @@ fn days_from_civil(year: i32, month: i32, day: i32) -> Option<i64> {
     let mp = month + if month > 2 { -3 } else { 9 };
     let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some((era * 146097 + doe - 719468) as i64)
+    Some((era * 146_097 + doe - 719_468) as i64)
 }
 
 fn extract_json_number_like_field(raw: &str, key: &str) -> Option<String> {

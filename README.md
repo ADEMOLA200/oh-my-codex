@@ -16,6 +16,10 @@ Multi-agent orchestration layer for [OpenAI Codex CLI](https://github.com/openai
 
 ## Featured Guides
 
+- [Release Verification Gates](./docs/release-gates.md)
+
+- [Native Surface Runtime Migration](./docs/rust/native-surface-runtime-migration.md)
+
 - [OpenClaw / Generic Notification Gateway Integration Guide](./docs/openclaw-integration.md)
 
 ## Languages
@@ -231,6 +235,7 @@ omx cancel         # Cancel active execution modes
 omx reasoning <mode> # low|medium|high|xhigh
 omx tmux-hook ...  # init|status|validate|test (optional tmux compatibility workflow)
 omx hooks ...      # init|status|validate|test (optional plugin extension workflow)
+- See docs/compat/notify-tmux-quarantine.md for the quarantine inventory and status.
 omx hud ...        # --watch|--json|--preset
 omx version        # Show version information
 omx help           # Show help message
@@ -610,9 +615,10 @@ oh-my-codex/
 git clone https://github.com/Yeachan-Heo/oh-my-codex.git
 cd oh-my-codex
 npm install
+cargo test --workspace
 npm run lint
 npm run build
-npm test
+npm run test:compat:node   # optional compatibility-only gate
 ```
 
 ## Documentation

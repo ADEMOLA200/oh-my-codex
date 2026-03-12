@@ -473,6 +473,13 @@ function readEnvValue(env: NodeJS.ProcessEnv, keys: string[]): string | null {
   return null;
 }
 
+function parseTeamWorkerEnv(raw: string | undefined): { teamName: string; workerName: string } | null {
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const match = /^([a-z0-9][a-z0-9-]{0,29})\/(worker-\d+)$/.exec(raw.trim());
+  if (!match) return null;
+  return { teamName: match[1], workerName: match[2] };
+}
+
 function parseOptionalBoolean(raw: string | null): boolean | null {
   if (!raw) return null;
   const normalized = raw.trim().toLowerCase();
@@ -543,20 +550,71 @@ function normalizeTask(task: TeamTask): TeamTaskV2 {
 }
 
 // Team state directory: .omx/state/team/{teamName}/
-function resolveTeamStateRoot(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
+function isSameOrDescendantPath(candidate: string, root: string): boolean {
+  const resolvedCandidate = resolve(candidate);
+  const resolvedRoot = resolve(root);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${sep}`);
+}
+
+function shouldHonorExplicitTeamStateRoot(
+  cwd: string,
+  explicitRoot: string,
+  teamName?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const resolvedRoot = resolve(cwd, explicitRoot.trim());
+  const workerContext = parseTeamWorkerEnv(readEnvValue(env, ['OMX_TEAM_WORKER']) ?? undefined);
+  const leaderCwd = readEnvValue(env, ['OMX_TEAM_LEADER_CWD']);
+  const leaderMatches = leaderCwd ? isSameOrDescendantPath(cwd, leaderCwd) : false;
+  if (leaderMatches) return true;
+
+  const inferredLeaderCwd = resolve(resolvedRoot, '..', '..');
+  const inferredLeaderMatches = isSameOrDescendantPath(cwd, inferredLeaderCwd);
+  if (inferredLeaderMatches) return true;
+
+  if (teamName) {
+    const localStateRoot = omxStateDir(cwd);
+    const localTeamRoot = join(localStateRoot, 'team', teamName);
+    const explicitTeamRoot = join(resolvedRoot, 'team', teamName);
+    if (existsSync(localTeamRoot)) return false;
+    if (
+      workerContext
+      && workerContext.teamName === teamName
+      && existsSync(join(explicitTeamRoot, 'workers', workerContext.workerName, 'identity.json'))
+    ) {
+      return true;
+    }
+    if (!workerContext && existsSync(explicitTeamRoot)) return true;
+    if (workerContext && !existsSync(localStateRoot) && existsSync(explicitTeamRoot)) return true;
+    return false;
+  }
+
+  if (workerContext) return true;
+  return false;
+}
+
+function resolveTeamStateRoot(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  teamName?: string,
+): string {
+  const explicit = env.OMX_TEAM_STATE_ROOT;
+  if (
+    typeof explicit === 'string'
+    && explicit.trim() !== ''
+    && shouldHonorExplicitTeamStateRoot(cwd, explicit, teamName, env)
+  ) {
+    return resolve(cwd, explicit.trim());
+  }
   const localStateRoot = omxStateDir(cwd);
   if (existsSync(localStateRoot)) {
     return localStateRoot;
-  }
-  const explicit = env.OMX_TEAM_STATE_ROOT;
-  if (typeof explicit === 'string' && explicit.trim() !== '') {
-    return resolve(cwd, explicit.trim());
   }
   return localStateRoot;
 }
 
 function teamDir(teamName: string, cwd: string): string {
-  return join(resolveTeamStateRoot(cwd), 'team', teamName);
+  return join(resolveTeamStateRoot(cwd, process.env, teamName), 'team', teamName);
 }
 
 function workerDir(teamName: string, workerName: string, cwd: string): string {
@@ -574,7 +632,7 @@ function teamManifestV2Path(teamName: string, cwd: string): string {
 function taskClaimLockDir(teamName: string, taskId: string, cwd: string): string {
   validateTaskId(taskId);
   const p = join(teamDir(teamName, cwd), 'claims', `task-${taskId}.lock`);
-  assertPathWithinDir(p, resolveTeamStateRoot(cwd));
+  assertPathWithinDir(p, resolveTeamStateRoot(cwd, process.env, teamName));
   return p;
 }
 
@@ -585,14 +643,14 @@ export function teamEventLogPath(teamName: string, cwd: string): string {
 function mailboxPath(teamName: string, workerName: string, cwd: string): string {
   validateWorkerName(workerName);
   const p = join(teamDir(teamName, cwd), 'mailbox', `${workerName}.json`);
-  assertPathWithinDir(p, resolveTeamStateRoot(cwd));
+  assertPathWithinDir(p, resolveTeamStateRoot(cwd, process.env, teamName));
   return p;
 }
 
 function mailboxLockDir(teamName: string, workerName: string, cwd: string): string {
   validateWorkerName(workerName);
   const p = join(teamDir(teamName, cwd), 'mailbox', `.lock-${workerName}`);
-  assertPathWithinDir(p, resolveTeamStateRoot(cwd));
+  assertPathWithinDir(p, resolveTeamStateRoot(cwd, process.env, teamName));
   return p;
 }
 
@@ -607,7 +665,7 @@ function dispatchLockDir(teamName: string, cwd: string): string {
 function approvalPath(teamName: string, taskId: string, cwd: string): string {
   validateTaskId(taskId);
   const p = join(teamDir(teamName, cwd), 'approvals', `task-${taskId}.json`);
-  assertPathWithinDir(p, resolveTeamStateRoot(cwd));
+  assertPathWithinDir(p, resolveTeamStateRoot(cwd, process.env, teamName));
   return p;
 }
 
@@ -1200,7 +1258,7 @@ export async function writeWorkerInbox(
 function taskFilePath(teamName: string, taskId: string, cwd: string): string {
   validateTaskId(taskId);
   const p = join(teamDir(teamName, cwd), 'tasks', `task-${taskId}.json`);
-  assertPathWithinDir(p, resolveTeamStateRoot(cwd));
+  assertPathWithinDir(p, resolveTeamStateRoot(cwd, process.env, teamName));
   return p;
 }
 

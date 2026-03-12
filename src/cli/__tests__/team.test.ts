@@ -16,12 +16,30 @@ import {
 } from '../../team/state.js';
 
 async function withoutTeamWorkerEnv<T>(fn: () => T | Promise<T>): Promise<T> {
-  const previousWorker = process.env.OMX_TEAM_WORKER;
-  delete process.env.OMX_TEAM_WORKER;
+  const workerScopedEnvKeys = [
+    'OMX_TEAM_WORKER',
+    'OMX_TEAM_WORKER_INDEX',
+    'OMX_TEAM_STATE_ROOT',
+    'OMX_TEAM_LEADER_CWD',
+    'OMX_TEAM_TASK',
+    'OMX_TEAM_WORKER_LAUNCH_ARGS',
+    'OMX_TEAM_WORKER_CLI_MAP',
+    'OMX_TEAM_WORKTREE_PATH',
+    'OMX_TEAM_WORKTREE_BRANCH',
+    'OMX_TEAM_WORKTREE_DETACHED',
+  ] as const;
+  const previous = new Map(workerScopedEnvKeys.map((key) => [key, process.env[key]]));
+  for (const key of workerScopedEnvKeys) {
+    delete process.env[key];
+  }
   try {
     return await fn();
   } finally {
-    if (typeof previousWorker === 'string') process.env.OMX_TEAM_WORKER = previousWorker;
+    for (const key of workerScopedEnvKeys) {
+      const value = previous.get(key);
+      if (typeof value === 'string') process.env[key] = value;
+      else delete process.env[key];
+    }
   }
 }
 
@@ -1494,7 +1512,7 @@ process.on('SIGTERM', () => process.exit(0));
 
       const teamTask = 'issue 742 linked ralph launch';
       const teamName = parseTeamStartArgs(['ralph', '1:executor', teamTask]).parsed.teamName;
-      await teamCommand(['ralph', '1:executor', teamTask]);
+      await withoutTeamWorkerEnv(() => teamCommand(['ralph', '1:executor', teamTask]));
 
       const teamState = JSON.parse(await readFile(join(wd, '.omx', 'state', 'team-state.json'), 'utf-8')) as Record<string, unknown>;
       const ralphState = JSON.parse(await readFile(join(wd, '.omx', 'state', 'ralph-state.json'), 'utf-8')) as Record<string, unknown>;

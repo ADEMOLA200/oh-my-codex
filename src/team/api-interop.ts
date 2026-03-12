@@ -400,10 +400,7 @@ function resolveTeamWorkingDirectoryFromMetadata(
 function resolveTeamWorkingDirectory(teamName: string, preferredCwd: string): string {
   const normalizedTeamName = String(teamName || '').trim();
   if (!normalizedTeamName) return preferredCwd;
-  const envTeamStateRoot = process.env.OMX_TEAM_STATE_ROOT;
-  if (typeof envTeamStateRoot === 'string' && envTeamStateRoot.trim() !== '') {
-    return stateRootToWorkingDirectory(envTeamStateRoot.trim());
-  }
+  const workerContext = parseTeamWorkerEnv(process.env.OMX_TEAM_WORKER);
 
   const seeds: string[] = [];
   for (const seed of [preferredCwd, process.cwd()]) {
@@ -411,7 +408,6 @@ function resolveTeamWorkingDirectory(teamName: string, preferredCwd: string): st
     if (!seeds.includes(seed)) seeds.push(seed);
   }
 
-  const workerContext = parseTeamWorkerEnv(process.env.OMX_TEAM_WORKER);
   for (const seed of seeds) {
     let cursor = seed;
     while (cursor) {
@@ -421,6 +417,17 @@ function resolveTeamWorkingDirectory(teamName: string, preferredCwd: string): st
       const parent = dirname(cursor);
       if (!parent || parent === cursor) break;
       cursor = parent;
+    }
+  }
+
+  const envTeamStateRoot = process.env.OMX_TEAM_STATE_ROOT;
+  if (typeof envTeamStateRoot === 'string' && envTeamStateRoot.trim() !== '') {
+    const envCwd = stateRootToWorkingDirectory(envTeamStateRoot.trim());
+    if (workerContext?.teamName === normalizedTeamName) {
+      const resolved = resolveTeamWorkingDirectoryFromMetadata(normalizedTeamName, envCwd, workerContext);
+      if (resolved) return resolved;
+    } else if (!workerContext && teamStateExists(normalizedTeamName, envCwd)) {
+      return resolveTeamWorkingDirectoryFromMetadata(normalizedTeamName, envCwd, null) ?? envCwd;
     }
   }
   return preferredCwd;
