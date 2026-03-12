@@ -88,6 +88,16 @@ omx team 2:explore "short scoped analysis task"
 
 Normal OMX usage, including the native `omx team` path, does not require **tmux**.
 tmux-backed flows are compatibility-only and are DISABLED by default. To enable, set `OMX_COMPAT_TMUX=1` (force-disable with `OMX_NO_TMUX=1`).
+
+Opt-in locally:
+
+```bash
+export OMX_COMPAT_TMUX=1   # enable tmux compatibility for this shell
+# export OMX_NO_TMUX=1     # force-disable if needed
+```
+
+Opt-in in CI (informational job example): see `.github/workflows/ci.yml` job `compat-node` which sets `OMX_COMPAT_TMUX=1` and runs `npm run test:compat:node`.
+
 Install tmux only if you use `omx tmux-hook` or other tmux-backed integrations:
 
 | Platform       | tmux provider                                            | Install                |
