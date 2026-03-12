@@ -166,6 +166,18 @@ const WINDOWS_DETACHED_BOOTSTRAP_DELAY_MS = 2500;
 
 type CliCommand = 'launch' | 'setup' | 'agents-init' | 'deepinit' | 'uninstall' | 'doctor' | 'ask' | 'explore' | 'sparkshell' | 'team' | 'session' | 'resume' | 'version' | 'tmux-hook' | 'hooks' | 'hud' | 'status' | 'cancel' | 'help' | 'reasoning' | string;
 
+const NESTED_HELP_COMMANDS = new Set<CliCommand>([
+  'agents-init',
+  'deepinit',
+  'hooks',
+  'ralph',
+  'resume',
+  'session',
+  'sparkshell',
+  'team',
+  'tmux-hook',
+]);
+
 export interface ResolvedCliInvocation {
   command: CliCommand;
   launchArgs: string[];
@@ -254,6 +266,10 @@ export function resolveCliInvocation(args: string[]): ResolvedCliInvocation {
 
 export function resolveNotifyTempContract(args: string[], env: NodeJS.ProcessEnv = process.env): ParseNotifyTempContractResult {
   return parseNotifyTempContractFromArgs(args, env);
+}
+
+export function commandOwnsLocalHelp(command: CliCommand): boolean {
+  return NESTED_HELP_COMMANDS.has(command);
 }
 
 export type CodexLaunchPolicy = 'inside-tmux' | 'direct';
@@ -412,7 +428,6 @@ export async function main(args: string[]): Promise<void> {
   const firstArg = args[0];
   const { command, launchArgs } = resolveCliInvocation(args);
   const flags = new Set(args.filter(a => a.startsWith('--')));
-  const ralphHelpRequested = firstArg === 'ralph' && (args[1] === '--help' || args[1] === '-h');
   const options = {
     force: flags.has('--force'),
     dryRun: flags.has('--dry-run'),
@@ -420,7 +435,7 @@ export async function main(args: string[]): Promise<void> {
     team: flags.has('--team'),
   };
 
-  if (flags.has('--help') && !ralphHelpRequested && !new Set(['team', 'session', 'agents-init', 'deepinit', 'resume', 'sparkshell']).has(command)) {
+  if (flags.has('--help') && !commandOwnsLocalHelp(command)) {
     console.log(HELP);
     return;
   }

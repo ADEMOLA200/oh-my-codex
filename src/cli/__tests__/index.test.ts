@@ -10,6 +10,7 @@ import {
   buildWindowsPromptCommand,
   buildTmuxSessionName,
   resolveCliInvocation,
+  commandOwnsLocalHelp,
   resolveCodexLaunchPolicy,
   classifyCodexExecFailure,
   resolveSignalExitCode,
@@ -284,6 +285,20 @@ describe('resolveTeamWorkerLaunchArgsEnv (spark)', () => {
       resolveTeamWorkerLaunchArgsEnv(undefined, ['--model', 'gpt-4.1'], true, expectedLowComplexityModel()),
       '--model gpt-4.1'
     );
+  });
+});
+
+describe('commandOwnsLocalHelp', () => {
+  it('returns true for nested commands that render their own help output', () => {
+    for (const command of ['agents-init', 'deepinit', 'hooks', 'ralph', 'resume', 'session', 'sparkshell', 'team', 'tmux-hook']) {
+      assert.equal(commandOwnsLocalHelp(command), true, `expected ${command} to own local help`);
+    }
+  });
+
+  it('returns false for top-level help-only commands', () => {
+    for (const command of ['help', 'launch', 'version']) {
+      assert.equal(commandOwnsLocalHelp(command), false, `expected ${command} to use top-level help`);
+    }
   });
 });
 
