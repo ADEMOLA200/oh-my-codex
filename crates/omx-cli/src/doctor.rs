@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::install_paths::{
     InstallScope, ScopeSource, resolve_install_paths, resolve_scope_from_persisted,
 };
+use crate::session_state::{extract_json_bool_field, extract_json_string_field};
 
 use omx_process::{CommandSpec, Platform, ProcessBridge, SpawnErrorKind};
 
@@ -203,18 +204,10 @@ fn check_tmux_compat(cwd: &Path, env: &BTreeMap<OsString, OsString>) -> Check {
     let state_path = cwd.join(".omx/state/team-state.json");
     let mut native_forced = false;
     if let Ok(raw) = fs::read_to_string(&state_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-            let no_tmux = json
-                .get("no_tmux")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let layout_mode_native = json
-                .get("layout_mode")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "native_equivalent")
-                .unwrap_or(false);
-            native_forced = no_tmux || layout_mode_native;
-        }
+        let no_tmux = extract_json_bool_field(&raw, "no_tmux").unwrap_or(false);
+        let layout_mode_native =
+            extract_json_string_field(&raw, "layout_mode").as_deref() == Some("native_equivalent");
+        native_forced = no_tmux || layout_mode_native;
     }
 
     let message = if no_tmux_env {
