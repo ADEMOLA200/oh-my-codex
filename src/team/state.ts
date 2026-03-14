@@ -542,12 +542,7 @@ function normalizeTask(task: TeamTask): TeamTaskV2 {
 function resolveTeamStateRoot(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.OMX_TEAM_STATE_ROOT;
   if (typeof explicit === 'string' && explicit.trim() !== '') {
-    const explicitRoot = resolve(cwd, explicit.trim());
-    const explicitLeaderCwd = dirname(dirname(explicitRoot));
-    const normalizedCwd = resolve(cwd);
-    if (normalizedCwd === explicitLeaderCwd) {
-      return explicitRoot;
-    }
+    return resolve(cwd, explicit.trim());
   }
   return omxStateDir(cwd);
 }
