@@ -108,12 +108,14 @@ The boundary map is clear: **CLI/MCP entry semantics are still TS-defined**, whi
 - TypeScript is still the behavioral SSOT for team runtime, tmux orchestration, and watcher semantics.
 - Rust now owns multiple runtime entrypoints and bounded helper/runtime slices.
 - The largest remaining parity risk is `runtime_run.rs` vs `src/team/runtime.ts`, not a hidden Node launch seam.
+- PR #841 should stay draft unless the remaining blocker ledger is fully resolved or truthfully narrowed **and** the owner explicitly authorizes undraft/merge.
 
 ### Unsafe statements
 - "Rust fully matches TS team-runtime behavior."
 - "Watcher parity is complete."
 - "tmux control-plane parity is complete."
 - "Cutover is ready without additional lifecycle verification."
+- "PR #841 is ready to undraft without explicit owner instruction."
 
 ## Verification snapshot
 - `npm run build -- --pretty false` → PASS.

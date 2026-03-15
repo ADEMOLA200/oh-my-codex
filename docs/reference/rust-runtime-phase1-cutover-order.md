@@ -27,6 +27,7 @@ Safe retirement order for remaining JS/TS runtime owners on the phase-1 control-
 - **Next remaining review focus after the verified native watcher/reply cutovers:** the biggest remaining control-plane risk is still the MCP team-runner lifecycle seam, but now the risk is behavioral parity inside native `runtime_run.rs`, not a live Node bridge. Review should focus on startup/bootstrap completeness, dispatch/retry handoff boundaries, and shutdown/linked-Ralph semantics.
 - **Fresh truth guard (2026-03-13):** direct code-boundary review now records the new cut line in one place: `src/mcp/team-server.ts` spawns `omx-runtime runtime-run`; `crates/omx-runtime/src/runtime_run.rs` no longer references `runtime-cli.js`, `START_TEAM_SCRIPT`, or `execute_node_json()`; and native `start_team()` now owns initial state/session/bootstrap creation. The remaining questions are parity and verification depth, not whether Node still owns the startup seam.
 - **Boundary note:** the HUD owner is replaced only for launch paths that already route through the shared selector under native mode; full runtime/control-plane cutover still depends on retiring the remaining Node-owned lifecycle surfaces above.
+- **PR #841 draft gate:** keep the PR in draft state until the blocker ledger above is either fully resolved or truthfully narrowed in PR-facing docs/review text, and only undraft after explicit owner instruction.
 
 
 ## Runtime-run review notes (2026-03-13)
