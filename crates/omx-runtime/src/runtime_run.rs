@@ -3,7 +3,8 @@ use std::ffi::OsString;
 use std::fs::{create_dir_all, read_dir, read_to_string, remove_dir_all, write, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{ChildStdin, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,7 @@ pub struct RuntimeRunInput {
     pub cwd: String,
     pub worker_count: usize,
     pub poll_interval_ms: u64,
+    pub worker_launch_mode: WorkerLaunchMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,8 +152,10 @@ pub fn run_runtime(args: &[String]) -> Result<(), String> {
 
 fn start_team(input: &RuntimeRunInput) -> Result<RuntimeStartResult, String> {
     let sanitized_team_name = sanitize_team_name(&input.team_name)?;
-    ensure_tmux_available()?;
-    ensure_inside_tmux()?;
+    if input.worker_launch_mode == WorkerLaunchMode::Interactive {
+        ensure_tmux_available()?;
+        ensure_inside_tmux()?;
+    }
 
     let worker_clis = normalize_agent_types(&input.agent_types, input.worker_count)?;
     let start_task = input
@@ -180,31 +184,62 @@ fn start_team(input: &RuntimeRunInput) -> Result<RuntimeStartResult, String> {
         &created_at,
     )?;
 
-    let session =
-        match create_team_session(&sanitized_team_name, input, &worker_clis, &team_state_root) {
-            Ok(session) => session,
+    if input.worker_launch_mode == WorkerLaunchMode::Interactive {
+        let session =
+            match create_team_session(&sanitized_team_name, input, &worker_clis, &team_state_root) {
+                Ok(session) => session,
+                Err(error) => {
+                    let _ = remove_dir_all(&team_root);
+                    return Err(error);
+                }
+            };
+
+        finalize_team_state(
+            &sanitized_team_name,
+            &start_task,
+            input,
+            &worker_clis,
+            &team_state_root,
+            &created_at,
+            &session,
+        )?;
+
+        send_worker_bootstrap_prompts(&sanitized_team_name, input, &session.worker_pane_ids)?;
+
+        Ok(RuntimeStartResult {
+            pane_ids: session.worker_pane_ids,
+            leader_pane_id: session.leader_pane_id,
+        })
+    } else {
+        let spawns = match spawn_prompt_workers(
+            &sanitized_team_name,
+            input,
+            &worker_clis,
+            &team_state_root,
+        ) {
+            Ok(spawns) => spawns,
             Err(error) => {
                 let _ = remove_dir_all(&team_root);
                 return Err(error);
             }
         };
 
-    finalize_team_state(
-        &sanitized_team_name,
-        &start_task,
-        input,
-        &worker_clis,
-        &team_state_root,
-        &created_at,
-        &session,
-    )?;
+        finalize_prompt_team_state(
+            &sanitized_team_name,
+            &start_task,
+            input,
+            &worker_clis,
+            &team_state_root,
+            &created_at,
+            &spawns,
+        )?;
+        send_worker_bootstrap_prompts(&sanitized_team_name, input, &[])?;
 
-    send_worker_bootstrap_prompts(&sanitized_team_name, input, &session.worker_pane_ids)?;
-
-    Ok(RuntimeStartResult {
-        pane_ids: session.worker_pane_ids,
-        leader_pane_id: session.leader_pane_id,
-    })
+        Ok(RuntimeStartResult {
+            pane_ids: Vec::new(),
+            leader_pane_id: String::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +247,28 @@ enum WorkerCli {
     Codex,
     Claude,
     Gemini,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerLaunchMode {
+    Interactive,
+    Prompt,
+}
+
+impl WorkerLaunchMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Prompt => "prompt",
+        }
+    }
+
+    fn display_mode(self) -> &'static str {
+        match self {
+            Self::Interactive => "split_pane",
+            Self::Prompt => "auto",
+        }
+    }
 }
 
 impl WorkerCli {
@@ -229,6 +286,26 @@ struct TeamSessionStart {
     team_target: String,
     leader_pane_id: String,
     worker_pane_ids: Vec<String>,
+}
+
+struct PromptWorkerSpawn {
+    worker_name: String,
+    pid: u32,
+}
+
+struct PromptWorkerHandle {
+    stdin: ChildStdin,
+}
+
+fn prompt_worker_registry() -> &'static Mutex<std::collections::HashMap<String, PromptWorkerHandle>>
+{
+    static REGISTRY: OnceLock<Mutex<std::collections::HashMap<String, PromptWorkerHandle>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn prompt_worker_key(team_name: &str, worker_name: &str) -> String {
+    format!("{team_name}/{worker_name}")
 }
 
 fn sanitize_team_name(name: &str) -> Result<String, String> {
@@ -382,10 +459,11 @@ fn initialize_team_state(
     let lifecycle_profile = resolve_lifecycle_profile(team_name, &input.cwd);
 
     let config = format!(
-        "{{\"name\":{},\"task\":{},\"agent_type\":\"executor\",\"worker_launch_mode\":\"interactive\",\"lifecycle_profile\":{},\"worker_count\":{},\"max_workers\":20,\"workers\":[{}],\"created_at\":{},\"tmux_session\":{},\"next_task_id\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":null,\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
+        "{{\"name\":{},\"task\":{},\"agent_type\":\"executor\",\"worker_launch_mode\":{},\"lifecycle_profile\":{},\"worker_count\":{},\"max_workers\":20,\"workers\":[{}],\"created_at\":{},\"tmux_session\":{},\"next_task_id\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":null,\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
 ",
         json_string(team_name),
         json_string(start_task),
+        json_string(input.worker_launch_mode.as_str()),
         json_string(lifecycle_profile),
         input.worker_count,
         worker_json,
@@ -400,12 +478,14 @@ fn initialize_team_state(
         .map_err(|err| format!("failed writing team config: {err}"))?;
 
     let manifest = format!(
-        "{{\"schema_version\":2,\"name\":{},\"task\":{},\"leader\":{{\"session_id\":{},\"worker_id\":{},\"role\":\"leader\"}},\"policy\":{{\"display_mode\":\"split_pane\",\"worker_launch_mode\":\"interactive\",\"dispatch_mode\":\"hook_preferred_with_fallback\",\"dispatch_ack_timeout_ms\":2000}},\"governance\":{{\"delegation_only\":false,\"plan_approval_required\":false,\"nested_teams_allowed\":false,\"one_team_per_leader_session\":true,\"cleanup_requires_all_workers_inactive\":true}},\"lifecycle_profile\":{},\"permissions_snapshot\":{{\"approval_mode\":{},\"sandbox_mode\":{},\"network_access\":true}},\"tmux_session\":{},\"worker_count\":{},\"workers\":[{}],\"next_task_id\":{},\"created_at\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":null,\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
+        "{{\"schema_version\":2,\"name\":{},\"task\":{},\"leader\":{{\"session_id\":{},\"worker_id\":{},\"role\":\"leader\"}},\"policy\":{{\"display_mode\":{},\"worker_launch_mode\":{},\"dispatch_mode\":\"hook_preferred_with_fallback\",\"dispatch_ack_timeout_ms\":2000}},\"governance\":{{\"delegation_only\":false,\"plan_approval_required\":false,\"nested_teams_allowed\":false,\"one_team_per_leader_session\":true,\"cleanup_requires_all_workers_inactive\":true}},\"lifecycle_profile\":{},\"permissions_snapshot\":{{\"approval_mode\":{},\"sandbox_mode\":{},\"network_access\":true}},\"tmux_session\":{},\"worker_count\":{},\"workers\":[{}],\"next_task_id\":{},\"created_at\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":null,\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
 ",
         json_string(team_name),
         json_string(start_task),
         json_string(&format!("native-runtime-{team_name}")),
         json_string(&leader_worker),
+        json_string(input.worker_launch_mode.display_mode()),
+        json_string(input.worker_launch_mode.as_str()),
         json_string(lifecycle_profile),
         json_string(&env::var("CODEX_APPROVAL_MODE").unwrap_or_else(|_| "never".to_string())),
         json_string(&env::var("CODEX_SANDBOX_MODE").unwrap_or_else(|_| "danger-full-access".to_string())),
@@ -478,10 +558,11 @@ fn finalize_team_state(
     let leader_worker = env::var("OMX_TEAM_WORKER").unwrap_or_else(|_| "leader-fixed".to_string());
 
     let config = format!(
-        "{{\"name\":{},\"task\":{},\"agent_type\":\"executor\",\"worker_launch_mode\":\"interactive\",\"lifecycle_profile\":{},\"worker_count\":{},\"max_workers\":20,\"workers\":[{}],\"created_at\":{},\"tmux_session\":{},\"next_task_id\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":{},\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
+        "{{\"name\":{},\"task\":{},\"agent_type\":\"executor\",\"worker_launch_mode\":{},\"lifecycle_profile\":{},\"worker_count\":{},\"max_workers\":20,\"workers\":[{}],\"created_at\":{},\"tmux_session\":{},\"next_task_id\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":{},\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
 ",
         json_string(team_name),
         json_string(start_task),
+        json_string(input.worker_launch_mode.as_str()),
         json_string(lifecycle_profile),
         input.worker_count,
         workers_json,
@@ -497,12 +578,14 @@ fn finalize_team_state(
         .map_err(|err| format!("failed updating team config: {err}"))?;
 
     let manifest = format!(
-        "{{\"schema_version\":2,\"name\":{},\"task\":{},\"leader\":{{\"session_id\":{},\"worker_id\":{},\"role\":\"leader\"}},\"policy\":{{\"display_mode\":\"split_pane\",\"worker_launch_mode\":\"interactive\",\"dispatch_mode\":\"hook_preferred_with_fallback\",\"dispatch_ack_timeout_ms\":2000}},\"governance\":{{\"delegation_only\":false,\"plan_approval_required\":false,\"nested_teams_allowed\":false,\"one_team_per_leader_session\":true,\"cleanup_requires_all_workers_inactive\":true}},\"lifecycle_profile\":{},\"permissions_snapshot\":{{\"approval_mode\":{},\"sandbox_mode\":{},\"network_access\":true}},\"tmux_session\":{},\"worker_count\":{},\"workers\":[{}],\"next_task_id\":{},\"created_at\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":{},\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
+        "{{\"schema_version\":2,\"name\":{},\"task\":{},\"leader\":{{\"session_id\":{},\"worker_id\":{},\"role\":\"leader\"}},\"policy\":{{\"display_mode\":{},\"worker_launch_mode\":{},\"dispatch_mode\":\"hook_preferred_with_fallback\",\"dispatch_ack_timeout_ms\":2000}},\"governance\":{{\"delegation_only\":false,\"plan_approval_required\":false,\"nested_teams_allowed\":false,\"one_team_per_leader_session\":true,\"cleanup_requires_all_workers_inactive\":true}},\"lifecycle_profile\":{},\"permissions_snapshot\":{{\"approval_mode\":{},\"sandbox_mode\":{},\"network_access\":true}},\"tmux_session\":{},\"worker_count\":{},\"workers\":[{}],\"next_task_id\":{},\"created_at\":{},\"leader_cwd\":{},\"team_state_root\":{},\"workspace_mode\":\"single\",\"leader_pane_id\":{},\"hud_pane_id\":null,\"resize_hook_name\":null,\"resize_hook_target\":null,\"next_worker_index\":{}}}
 ",
         json_string(team_name),
         json_string(start_task),
         json_string(&format!("native-runtime-{team_name}")),
         json_string(&leader_worker),
+        json_string(input.worker_launch_mode.display_mode()),
+        json_string(input.worker_launch_mode.as_str()),
         json_string(lifecycle_profile),
         json_string(&env::var("CODEX_APPROVAL_MODE").unwrap_or_else(|_| "never".to_string())),
         json_string(&env::var("CODEX_SANDBOX_MODE").unwrap_or_else(|_| "danger-full-access".to_string())),
@@ -2504,6 +2587,7 @@ pub fn parse_runtime_input(raw: &str) -> Result<RuntimeRunInput, String> {
         .map(|value| value as usize)
         .unwrap_or(agent_types.len());
     let poll_interval_ms = extract_json_number(trimmed, "pollIntervalMs").unwrap_or(5_000);
+    let worker_launch_mode = resolve_worker_launch_mode();
 
     Ok(RuntimeRunInput {
         team_name,
@@ -2512,7 +2596,19 @@ pub fn parse_runtime_input(raw: &str) -> Result<RuntimeRunInput, String> {
         cwd,
         worker_count,
         poll_interval_ms,
+        worker_launch_mode,
     })
+}
+
+fn resolve_worker_launch_mode() -> WorkerLaunchMode {
+    match env::var("OMX_TEAM_WORKER_LAUNCH_MODE") {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "interactive" => WorkerLaunchMode::Interactive,
+            "prompt" => WorkerLaunchMode::Prompt,
+            _ => WorkerLaunchMode::Interactive,
+        },
+        Err(_) => WorkerLaunchMode::Interactive,
+    }
 }
 
 fn json_string(value: &str) -> String {
@@ -2809,7 +2905,7 @@ mod tests {
         monitor_team, parse_runtime_input, read_linked_ralph_profile, resolve_lifecycle_profile,
         resolve_runtime_lifecycle_profile, shutdown_team, split_json_array_entries,
         write_panes_sidecar_placeholder, write_phase_state, RuntimeRunInput, RuntimeTaskInput,
-        TeamSessionStart, WorkerCli,
+        TeamSessionStart, WorkerCli, WorkerLaunchMode,
     };
     use crate::test_support::env_lock;
     use std::env;
@@ -2869,6 +2965,23 @@ mod tests {
             vec!["2".to_string(), "3".to_string()]
         );
         assert_eq!(parsed.tasks[0].role.as_deref(), Some("executor"));
+    }
+
+    #[test]
+    fn parse_runtime_input_reads_prompt_launch_mode_from_env() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe { env::set_var("OMX_TEAM_WORKER_LAUNCH_MODE", "prompt") };
+
+        let parsed = parse_runtime_input(
+            r#"{"teamName":"alpha","agentTypes":["codex"],"tasks":[{"subject":"one","description":"desc"}],"cwd":"/tmp/repo"}"#,
+        )
+        .expect("expected runtime-run input to parse");
+
+        assert_eq!(parsed.worker_launch_mode, WorkerLaunchMode::Prompt);
+
+        unsafe { env::remove_var("OMX_TEAM_WORKER_LAUNCH_MODE") };
     }
 
     #[test]
@@ -3001,6 +3114,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         };
         let created_at = "2026-03-14T00:00:00.000Z";
         let team_state_root = temp.join(".omx").join("state");
@@ -3068,6 +3182,96 @@ mod tests {
     }
 
     #[test]
+    fn startup_state_persists_prompt_launch_mode_into_config_and_manifest() {
+        let temp = std::env::temp_dir().join(format!(
+            "omx-runtime-run-prompt-launch-mode-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        let team_state_root = temp.join(".omx").join("state");
+
+        let input = RuntimeRunInput {
+            team_name: "alpha".into(),
+            agent_types: vec!["codex".into()],
+            tasks: vec![RuntimeTaskInput {
+                subject: "one".into(),
+                description: "desc".into(),
+                owner: None,
+                blocked_by: Vec::new(),
+                role: None,
+            }],
+            cwd: temp.to_string_lossy().into_owned(),
+            worker_count: 1,
+            poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Prompt,
+        };
+        let created_at = "2026-03-14T00:00:00.000Z";
+
+        initialize_team_state(
+            "alpha",
+            "one",
+            &input,
+            &[WorkerCli::Codex],
+            &team_state_root,
+            created_at,
+        )
+        .expect("expected initial team state");
+
+        let initial_config = read_to_string(
+            team_state_root
+                .join("team")
+                .join("alpha")
+                .join("config.json"),
+        )
+        .expect("expected initial config");
+        let initial_manifest = read_to_string(
+            team_state_root
+                .join("team")
+                .join("alpha")
+                .join("manifest.v2.json"),
+        )
+        .expect("expected initial manifest");
+        assert!(initial_config.contains("\"worker_launch_mode\":\"prompt\""));
+        assert!(initial_manifest.contains("\"worker_launch_mode\":\"prompt\""));
+        assert!(initial_manifest.contains("\"display_mode\":\"auto\""));
+
+        finalize_team_state(
+            "alpha",
+            "one",
+            &input,
+            &[WorkerCli::Codex],
+            &team_state_root,
+            created_at,
+            &TeamSessionStart {
+                team_target: "omx-team-alpha:1".into(),
+                leader_pane_id: "%1".into(),
+                worker_pane_ids: vec!["%2".into()],
+            },
+        )
+        .expect("expected finalized team state");
+
+        let final_config = read_to_string(
+            team_state_root
+                .join("team")
+                .join("alpha")
+                .join("config.json"),
+        )
+        .expect("expected final config");
+        let final_manifest = read_to_string(
+            team_state_root
+                .join("team")
+                .join("alpha")
+                .join("manifest.v2.json"),
+        )
+        .expect("expected final manifest");
+        assert!(final_config.contains("\"worker_launch_mode\":\"prompt\""));
+        assert!(final_manifest.contains("\"worker_launch_mode\":\"prompt\""));
+        assert!(final_manifest.contains("\"display_mode\":\"auto\""));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn initialize_team_state_preserves_task_metadata_and_worker_inbox_assignment() {
         let temp = std::env::temp_dir().join(format!(
             "omx-runtime-run-task-metadata-{}",
@@ -3098,6 +3302,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 2,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         };
 
         initialize_team_state(
@@ -3183,6 +3388,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 100,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         });
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].task_id, "1");
@@ -3269,6 +3475,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("monitor ok")
         .expect("snapshot");
@@ -3293,6 +3500,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("monitor ok")
         .expect("snapshot");
@@ -3349,6 +3557,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("monitor ok")
         .expect("snapshot");
@@ -3441,6 +3650,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("expected monitor ok")
         .expect("expected snapshot");
@@ -3496,6 +3706,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("expected monitor ok")
         .expect("expected snapshot");
@@ -3573,6 +3784,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("expected monitor ok")
         .expect("expected snapshot");
@@ -3635,6 +3847,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("expected monitor ok")
         .expect("expected snapshot");
@@ -3693,6 +3906,7 @@ mod tests {
             cwd: temp.to_string_lossy().into_owned(),
             worker_count: 1,
             poll_interval_ms: 10,
+            worker_launch_mode: WorkerLaunchMode::Interactive,
         })
         .expect("expected monitor ok")
         .expect("expected snapshot");
