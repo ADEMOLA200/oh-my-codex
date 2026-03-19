@@ -17,7 +17,7 @@ import { tmpdir } from 'os';
 import { appendFile } from 'fs/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SCRIPTS_DIR = join(__dirname, '..', '..', '..', 'scripts');
+const SCRIPTS_DIR = join(__dirname, '..', '..', '..', 'dist', 'scripts');
 
 async function loadModule(rel: string) {
   return import(pathToFileURL(join(SCRIPTS_DIR, rel)).href);

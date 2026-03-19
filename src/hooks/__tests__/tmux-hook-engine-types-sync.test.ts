@@ -14,7 +14,7 @@ function collectExports(source: string): Set<string> {
 describe('tmux-hook-engine declaration sync', () => {
   it('covers all runtime exports in src/types/tmux-hook-engine.d.ts', async () => {
     const root = process.cwd();
-    const runtimeSource = await readFile(join(root, 'scripts', 'tmux-hook-engine.js'), 'utf-8');
+    const runtimeSource = await readFile(join(root, 'dist', 'scripts', 'tmux-hook-engine.js'), 'utf-8');
     const declSource = await readFile(join(root, 'src', 'types', 'tmux-hook-engine.d.ts'), 'utf-8');
 
     const runtimeExports = collectExports(runtimeSource);

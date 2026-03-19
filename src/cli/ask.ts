@@ -154,7 +154,7 @@ export function resolveAskAdvisorScriptPath(
   if (override) {
     return isAbsolute(override) ? override : join(packageRoot, override);
   }
-  return join(packageRoot, 'scripts', 'run-provider-advisor.js');
+  return join(packageRoot, 'dist', 'scripts', 'run-provider-advisor.js');
 }
 
 function resolveSignalExitCode(signal: NodeJS.Signals | null): number {

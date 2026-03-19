@@ -195,7 +195,7 @@ describe('notify-fallback watcher', () => {
       ];
       await writeFile(rolloutPath, `${lines.map(v => JSON.stringify(v)).join('\n')}\n`);
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const result = spawnSync(
         process.execPath,
@@ -252,7 +252,7 @@ describe('notify-fallback watcher', () => {
         }\n`
       );
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const watcherStatePath = join(wd, '.omx', 'state', 'notify-fallback-state.json');
       const turnLog = join(wd, '.omx', 'logs', `turns-${new Date().toISOString().split('T')[0]}.jsonl`);
@@ -315,7 +315,7 @@ describe('notify-fallback watcher', () => {
         trigger_message: 'dispatch ping',
       }, wd);
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const result = spawnSync(
         process.execPath,
@@ -369,7 +369,7 @@ describe('notify-fallback watcher', () => {
         leader_pane_id: '%42',
       }, null, 2));
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const result = spawnSync(
         process.execPath,
@@ -416,7 +416,7 @@ describe('notify-fallback watcher', () => {
         worker_index: 1,
         trigger_message: 'dispatch ping',
       }, wd);
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const result = spawnSync(
         process.execPath,
@@ -442,7 +442,7 @@ describe('notify-fallback watcher', () => {
         worker_index: 1,
         trigger_message: 'dispatch ping',
       }, wd);
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const result = spawnSync(
         process.execPath,
@@ -490,7 +490,7 @@ describe('notify-fallback watcher', () => {
         trigger_message: 'dispatch ping',
       }, wd);
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const env = {
         ...process.env,
@@ -541,7 +541,7 @@ describe('notify-fallback watcher', () => {
         tmux_pane_id: '%42',
       }, null, 2));
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const env = {
         ...process.env,
@@ -603,7 +603,7 @@ describe('notify-fallback watcher', () => {
         tmux_pane_id: '%42',
       }, null, 2));
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const env = {
         ...process.env,
@@ -675,7 +675,7 @@ describe('notify-fallback watcher', () => {
         tmux_pane_id: '%42',
       }, null, 2));
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const result = spawnSync(
         process.execPath,
@@ -745,7 +745,7 @@ describe('notify-fallback watcher', () => {
         trigger_message: 'dispatch ping',
       }, wd);
 
-      const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+      const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
       const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
       const env = {
         ...process.env,
@@ -778,7 +778,7 @@ describe('notify-fallback watcher', () => {
   it('exits when the tracked parent pid is gone', async () => {
     const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-parent-exit-'));
     const tempHome = await mkdtemp(join(tmpdir(), 'omx-fallback-parent-home-'));
-    const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+    const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
     const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
     const logPath = join(wd, '.omx', 'logs', `notify-fallback-${new Date().toISOString().split('T')[0]}.jsonl`);
     let child: ReturnType<typeof spawn> | undefined;
@@ -839,7 +839,7 @@ describe('notify-fallback watcher', () => {
     const sessionId = 'sess-active-ralph';
     const sessionStateDir = join(stateDir, 'sessions', sessionId);
     const ralphStatePath = join(sessionStateDir, 'ralph-state.json');
-    const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+    const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
     const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
     const logPath = join(wd, '.omx', 'logs', `notify-fallback-${new Date().toISOString().split('T')[0]}.jsonl`);
     let child: ReturnType<typeof spawn> | undefined;
@@ -923,7 +923,7 @@ describe('notify-fallback watcher', () => {
     const replacementTimeoutMs = 20000; // c8-instrumented Node20 full runs can delay watcher handoff well beyond 8s.
     const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-stale-pid-'));
     const tempHome = await mkdtemp(join(tmpdir(), 'omx-fallback-stale-home-'));
-    const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+    const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
     const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
     const pidPath = join(wd, '.omx', 'state', 'notify-fallback.pid');
     let first: ReturnType<typeof spawn> | undefined;
@@ -1015,7 +1015,7 @@ describe('notify-fallback watcher', () => {
   it('exits after the configured max lifetime', async () => {
     const wd = await mkdtemp(join(tmpdir(), 'omx-fallback-max-life-'));
     const tempHome = await mkdtemp(join(tmpdir(), 'omx-fallback-max-home-'));
-    const watcherScript = new URL('../../../scripts/notify-fallback-watcher.js', import.meta.url).pathname;
+    const watcherScript = new URL('../../../dist/scripts/notify-fallback-watcher.js', import.meta.url).pathname;
     const notifyHook = new URL('../../../dist/scripts/notify-hook.js', import.meta.url).pathname;
     const logPath = join(wd, '.omx', 'logs', `notify-fallback-${new Date().toISOString().split('T')[0]}.jsonl`);
     let child: ReturnType<typeof spawn> | undefined;

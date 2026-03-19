@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SCRIPTS_DIR = join(__dirname, '..', '..', '..', 'scripts');
+const SCRIPTS_DIR = join(__dirname, '..', '..', '..', 'dist', 'scripts');
 const NOTIFY_HOOK_SCRIPT = new URL('../../../dist/scripts/notify-hook.js', import.meta.url);
 
 async function loadModule(rel: string) {
