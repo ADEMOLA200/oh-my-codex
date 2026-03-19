@@ -384,16 +384,8 @@ fn prepare_allowlist_environment() -> Result<AllowlistEnvironment, String> {
         .ok_or_else(|| "failed to locate host sh for allowlist wrapper".to_string())?;
 
     for command in ALLOWED_DIRECT_COMMANDS {
-        let real = resolve_host_command(command).ok_or_else(|| {
-            format!("failed to locate host command `{command}` for allowlist wrapper")
-        })?;
         let wrapper_path = bin_dir.join(command);
-        let wrapper = format!(
-            "#!/bin/sh\nexec {} {} {} \"$@\"\n",
-            shell_quote(&self_exe.display().to_string()),
-            shell_quote(INTERNAL_DIRECT_WRAPPER_FLAG),
-            shell_quote(&format!("{command}:{}", real.display())),
-        );
+        let wrapper = build_direct_wrapper(&self_exe, command);
         write_executable(&wrapper_path, &wrapper)?;
     }
 
@@ -449,6 +441,24 @@ fn write_executable(path: &Path, content: &str) -> Result<(), String> {
             .map_err(|err| format!("failed to chmod wrapper {}: {err}", path.display()))?;
     }
     Ok(())
+}
+
+fn build_direct_wrapper(self_exe: &Path, command: &str) -> String {
+    if let Some(real) = resolve_host_command(command) {
+        return format!(
+            "#!/bin/sh\nexec {} {} {} \"$@\"\n",
+            shell_quote(&self_exe.display().to_string()),
+            shell_quote(INTERNAL_DIRECT_WRAPPER_FLAG),
+            shell_quote(&format!("{command}:{}", real.display())),
+        );
+    }
+
+    format!(
+        "#!/bin/sh\nprintf '%s\\n' {} >&2\nexit 127\n",
+        shell_quote(&format!(
+            "omx explore allowlisted host command `{command}` is unavailable on this host"
+        )),
+    )
 }
 
 fn resolve_host_command(command: &str) -> Option<PathBuf> {
@@ -875,6 +885,42 @@ mod tests {
         let expected_node = resolve_host_command("node").expect("host node path");
         assert_eq!(launch.program, expected_node.display().to_string());
         assert_eq!(launch.leading_args, vec![script_path.display().to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_allowlist_environment_tolerates_missing_rg_by_stubbing_wrapper() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = env_lock();
+        let root = temp_allowlist_dir().expect("temp root");
+        let host_bin = root.path.join("host-bin");
+        create_dir_all(&host_bin).expect("create host bin");
+        let bash = resolve_host_command("bash").expect("host bash path");
+        let sh = resolve_host_command("sh").expect("host sh path");
+        symlink(&bash, host_bin.join("bash")).expect("symlink bash");
+        symlink(&sh, host_bin.join("sh")).expect("symlink sh");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", &host_bin);
+        }
+
+        let allowlist = prepare_allowlist_environment().expect("allowlist environment");
+        let rg_output = Command::new(allowlist.bin_dir.join("rg"))
+            .arg("needle")
+            .arg("src")
+            .output()
+            .expect("run rg stub");
+
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(rg_output.status.code(), Some(127));
+        assert!(String::from_utf8_lossy(&rg_output.stderr).contains("`rg` is unavailable"));
+        assert!(allowlist.bin_dir.join("grep").exists());
     }
 
     #[test]
