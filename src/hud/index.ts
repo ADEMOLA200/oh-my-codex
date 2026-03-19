@@ -121,10 +121,10 @@ export async function runWatchMode(
     resolveDone();
   };
 
-  const renderTick = async () => {
+  const renderTick = async (fromQueue = false) => {
     if (stopped) return;
     if (inFlight) {
-      queued = true;
+      if (!fromQueue) queued = true;
       return;
     }
     inFlight = true;
@@ -140,7 +140,10 @@ export async function runWatchMode(
       const preset = flags.preset ?? config.preset;
       const line = dependencies.renderHudFn(ctx, preset);
       dependencies.writeStdout(line + '\x1b[K\n\x1b[J');
-      await dependencies.runAuthorityTickFn({ cwd });
+      void dependencies.runAuthorityTickFn({ cwd }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        dependencies.writeStderr(`HUD authority tick failed: ${message}\n`);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       dependencies.writeStderr(`HUD watch render failed: ${message}\n`);
@@ -153,7 +156,8 @@ export async function runWatchMode(
 
     if (queued) {
       queued = false;
-      await renderTick();
+      await Promise.resolve();
+      await renderTick(true);
     }
   };
 

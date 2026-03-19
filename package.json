@@ -8,12 +8,12 @@
     "omx": "dist/cli/omx.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e 'try{require(\"node:fs\").chmodSync(\"dist/cli/omx.js\",0o755)}catch(e){if(e.code!==\"ENOENT\")throw e}'",
     "build:explore": "cargo build -p omx-explore-harness",
     "build:full": "npm run build && npm run build:explore:release && npm run build:sparkshell",
-    "build:explore:release": "node dist/scripts/build-explore-harness.js",
+    "build:explore:release": "node scripts/build-explore-harness.js",
     "check:no-unused": "tsc -p tsconfig.no-unused.json",
-    "clean:native-package-assets": "node dist/scripts/cleanup-explore-harness.js",
+    "clean:native-package-assets": "node scripts/cleanup-explore-harness.js",
     "dev": "tsc --watch",
     "lint": "biome lint .",
     "prepack": "npm run build && npm run clean:native-package-assets",
@@ -28,9 +28,9 @@
     "coverage:ts:full": "npm run build && c8 --all --src dist --exclude '**/__tests__/**' --exclude 'dist/bin/**' --exclude 'dist/**/*.d.ts' --reporter=text-summary --reporter=lcov --reporter=json-summary --report-dir coverage/ts-full node --test $(find dist -name '*.test.js')",
     "test:compat:node": "npm run build && node --test dist/compat/__tests__/*.test.js",
     "test:compat:rust": "cargo build && OMX_COMPAT_TARGET=./target/debug/omx npm run test:compat:node",
-    "build:sparkshell": "node dist/scripts/build-sparkshell.js",
-    "smoke:packed-install": "node dist/scripts/smoke-packed-install.js",
-    "test:sparkshell": "node dist/scripts/test-sparkshell.js",
+    "build:sparkshell": "node scripts/build-sparkshell.mjs",
+    "smoke:packed-install": "node scripts/smoke-packed-install.mjs",
+    "test:sparkshell": "node scripts/test-sparkshell.mjs",
     "postpack": "npm run clean:native-package-assets"
   },
   "engines": {
@@ -40,11 +40,15 @@
     "Cargo.toml",
     "Cargo.lock",
     "dist/",
+    "dist/cli/omx.js",
     "crates/",
     "agents/",
     "skills/",
     "prompts/",
     "templates/",
+    "scripts/",
+    "scripts/build-sparkshell.mjs",
+    "scripts/test-sparkshell.mjs",
     "src/scripts/"
   ],
   "keywords": [

@@ -292,6 +292,8 @@ export async function resolveNudgePaneTarget(stateDir: any) {
   const { resolveCodexPane } = await import('../tmux-hook-engine.js');
   const codexPane = resolveCodexPane();
   if (codexPane) return codexPane;
+  const tmuxPane = safeString(process.env.TMUX_PANE).trim();
+  if (tmuxPane) return tmuxPane;
 
   try {
     const scopedDirs = await getScopedStateDirsForCurrentSession(stateDir);

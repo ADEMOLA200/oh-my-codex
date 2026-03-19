@@ -34,22 +34,13 @@ export async function evaluatePaneInjectionReadiness(paneTarget: any, {
     };
   }
 
-  // Canonical bypass: if resolveCodexPane confirms this is a codex pane
-  // (via pane_start_command), skip all readiness guards. The pane IS running
-  // codex even though tmux may report cmd=sh (shell wrapper).
+  // Canonical codex pane detection helps bypass shell-wrapper false negatives,
+  // but copy-mode/scrollback must still block injection before any bypass applies.
+  let resolvedCodexPane = false;
   try {
-    if (resolveCodexPane() === target) {
-      return {
-        ok: true,
-        sent: false,
-        reason: 'ok',
-        paneTarget: target,
-        paneCurrentCommand: 'codex',
-        paneCapture: '',
-      };
-    }
+    resolvedCodexPane = resolveCodexPane() === target;
   } catch {
-    // Non-fatal: fall through to normal readiness checks
+    resolvedCodexPane = false;
   }
 
   if (skipIfScrolling) {
@@ -75,7 +66,7 @@ export async function evaluatePaneInjectionReadiness(paneTarget: any, {
   try {
     const result = await runProcess('tmux', buildPaneCurrentCommandArgv(target), 1000);
     paneCurrentCommand = safeString(result.stdout).trim();
-    paneRunningShell = requireRunningAgent && isPaneRunningShell(paneCurrentCommand);
+    paneRunningShell = !resolvedCodexPane && requireRunningAgent && isPaneRunningShell(paneCurrentCommand);
   } catch {
     paneCurrentCommand = '';
   }

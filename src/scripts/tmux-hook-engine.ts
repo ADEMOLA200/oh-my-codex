@@ -197,51 +197,50 @@ export function resolveCodexPane(): string {
   const envPane = (process.env.TMUX_PANE || '').trim();
   if (!envPane) return '';
 
-  // Check if TMUX_PANE is actually running an agent
   try {
-    const cmd = execFileSync('tmux', ['display-message', '-t', envPane, '-p', '#{pane_current_command}'], {
+    const cmd = execFileSync('tmux', ['display-message', '-p', '-t', envPane, '#{pane_current_command}'], {
       encoding: 'utf-8', timeout: 2000,
     }).trim().toLowerCase();
     const base = cmd.split('/').pop()?.replace(/^-/, '') || '';
-    if (AGENT_COMMANDS.has(base)) {
-      return envPane; // TMUX_PANE is running a codex agent — use it
-    }
-    if (!SHELL_COMMANDS.has(base)) {
-      // Not a shell and not a known agent (e.g. 'claude' = Claude Code CLI)
-      // Fall through to session scan to find the actual codex pane
-    }
+    if (!base) return '';
+    if (AGENT_COMMANDS.has(base)) return envPane;
+    if (!SHELL_COMMANDS.has(base)) return envPane;
   } catch {
-    return envPane; // Can't check — use it as-is
+    return envPane;
   }
 
-  // TMUX_PANE is a shell — find the actual agent pane in the same session
   try {
-    const sessionName = execFileSync('tmux', ['display-message', '-t', envPane, '-p', '#{session_name}'], {
+    let sessionName = execFileSync('tmux', ['display-message', '-p', '#S'], {
       encoding: 'utf-8', timeout: 2000,
     }).trim();
-    if (!sessionName) return envPane;
+    if (!sessionName) {
+      sessionName = execFileSync('tmux', ['display-message', '-p', '-t', envPane, '#S'], {
+        encoding: 'utf-8', timeout: 2000,
+      }).trim();
+    }
+    if (!sessionName) {
+      sessionName = execFileSync('tmux', ['display-message', '-p', '-t', envPane, '#{session_name}'], {
+        encoding: 'utf-8', timeout: 2000,
+      }).trim();
+    }
+    if (!sessionName) return '';
 
     const panes = execFileSync('tmux', [
-      'list-panes', '-s', '-t', sessionName,
-      '-F', '#{pane_id}\t#{pane_current_command}\t#{pane_start_command}',
+      'list-panes', '-t', sessionName,
+      '-F', '#{pane_id}	#{pane_current_command}	#{pane_active}	#{pane_current_path}',
     ], { encoding: 'utf-8', timeout: 2000 }).trim().split('\n');
 
-    // Find the pane that was STARTED with codex (not the HUD or shell)
     for (const line of panes) {
-      const parts = line.split('\t');
-      const paneId = parts[0];
-      const startCmd = (parts[2] || '').toLowerCase();
-      if (!paneId) continue;
-      // The codex pane has 'codex' in its start command
-      if (startCmd.includes('codex') && !startCmd.includes('hud')) {
-        return paneId;
-      }
+      const [paneId, paneCurrentCommand] = line.split('	');
+      if (!paneId || paneId === envPane) continue;
+      const base = (paneCurrentCommand || '').toLowerCase().split('/').pop()?.replace(/^-/, '') || '';
+      if (!AGENT_COMMANDS.has(base)) continue;
+      return paneId;
     }
   } catch {
     // Fall through
   }
 
-  // No agent pane found in the session — don't fall back to a shell pane
   return '';
 }
 

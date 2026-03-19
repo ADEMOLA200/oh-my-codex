@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '..', '..');
-const nativeRoot = join(projectRoot, 'native', 'omx-sparkshell');
+const nativeRoot = join(projectRoot, 'crates', 'omx-sparkshell');
 const manifestPath = process.env.OMX_SPARKSHELL_MANIFEST ?? join(nativeRoot, 'Cargo.toml');
 const binaryName = platform() === 'win32' ? 'omx-sparkshell.exe' : 'omx-sparkshell';
 const releaseBinaryPath = join(projectRoot, 'target', 'release', binaryName);
