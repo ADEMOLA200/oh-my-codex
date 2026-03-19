@@ -584,14 +584,10 @@ function resolveAbsoluteBinaryPath(binary: string): string {
 
 /**
  * Resolve the leader's node binary path.
- * Caches results for the process lifetime.
+ * Re-resolve on each call so tests and worker launch prep respect the current PATH.
  */
-let _leaderPaths: { node: string; } | null = null;
 function resolveLeaderNodePath(): string {
-  if (!_leaderPaths) {
-    _leaderPaths = { node: resolveAbsoluteBinaryPath('node') };
-  }
-  return _leaderPaths.node;
+  return resolveAbsoluteBinaryPath('node');
 }
 
 export function assertTeamWorkerCliBinaryAvailable(
