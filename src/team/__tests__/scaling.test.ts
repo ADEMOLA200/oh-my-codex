@@ -544,7 +544,11 @@ exit 0
         'executor',
         [{ subject: 'write docs', description: 'write docs', owner: 'worker-2', role: 'writer' }],
         cwd,
-        { OMX_TEAM_SCALING_ENABLED: '1', OMX_TEAM_SKIP_READY_WAIT: '1' },
+        {
+          OMX_TEAM_SCALING_ENABLED: '1',
+          OMX_TEAM_SKIP_READY_WAIT: '1',
+          OMX_TEAM_WORKER_LAUNCH_ARGS: '--model gpt-5.4-mini',
+        },
       );
       assert.equal(result.ok, true);
       if (!result.ok) return;
@@ -556,6 +560,175 @@ exit 0
       const rootAgents = await readFile(join(cwd, '.omx', 'team', 'canonical-root', 'worktrees', 'worker-2', 'AGENTS.md'), 'utf-8');
       assert.match(rootAgents, /You are operating as the \*\*writer\*\* role/);
       assert.match(rootAgents, /<identity>You are Writer\.<\/identity>/);
+      assert.match(rootAgents, /exact gpt-5\.4-mini model/);
+      assert.match(rootAgents, /strict execution order: inspect -> plan -> act -> verify/);
+    } finally {
+      if (typeof previousPath === 'string') process.env.PATH = previousPath;
+      else delete process.env.PATH;
+      await rm(cwd, { recursive: true, force: true });
+      await rm(fakeBinDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not apply mini guidance during scale-up when the final worker model is gpt-5.4', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-scale-up-frontier-role-'));
+    const fakeBinDir = await mkdtemp(join(tmpdir(), 'omx-scale-up-frontier-role-bin-'));
+    const tmuxStubPath = join(fakeBinDir, 'tmux');
+    const previousPath = process.env.PATH;
+
+    try {
+      await writeFile(
+        tmuxStubPath,
+        `#!/bin/sh
+set -eu
+case "\${1:-}" in
+  -V)
+    echo "tmux 3.2a"
+    ;;
+  split-window)
+    echo "%31"
+    ;;
+  list-panes)
+    echo "42424"
+    ;;
+  capture-pane)
+    echo ""
+    ;;
+esac
+exit 0
+`,
+      );
+      await chmod(tmuxStubPath, 0o755);
+      process.env.PATH = `${fakeBinDir}:${previousPath ?? ''}`;
+
+      await mkdir(join(cwd, '.codex', 'prompts'), { recursive: true });
+      await writeFile(join(cwd, '.codex', 'prompts', 'test-engineer.md'), '<identity>Test Engineer</identity>');
+      await mkdir(join(cwd, '.omx', 'state', 'team', 'frontier-role'), { recursive: true });
+      await writeFile(join(cwd, '.omx', 'state', 'team', 'frontier-role', 'worker-agents.md'), '# Base worker instructions\n');
+
+      await initTeamState('frontier-role', 'task', 'executor', 1, cwd);
+      await createTask('frontier-role', {
+        subject: 'existing task',
+        description: 'already persisted',
+        status: 'pending',
+        owner: 'worker-1',
+      }, cwd);
+
+      const config = await readTeamConfig('frontier-role', cwd);
+      assert.ok(config);
+      if (!config) return;
+      config.tmux_session = 'omx-team-frontier-role';
+      config.leader_pane_id = '%11';
+      config.workers[0]!.pane_id = '%21';
+      await saveTeamConfig(config, cwd);
+
+      const manifestPath = join(cwd, '.omx', 'state', 'team', 'frontier-role', 'manifest.v2.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf-8')) as { policy?: Record<string, unknown> };
+      manifest.policy = {
+        ...(manifest.policy ?? {}),
+        dispatch_mode: 'transport_direct',
+      };
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const result = await scaleUp(
+        'frontier-role',
+        1,
+        'executor',
+        [{ subject: 'test routing report only', description: 'test routing report only', owner: 'worker-2', role: 'test-engineer' }],
+        cwd,
+        { OMX_TEAM_SCALING_ENABLED: '1', OMX_TEAM_SKIP_READY_WAIT: '1' },
+      );
+      assert.equal(result.ok, true);
+      if (!result.ok) return;
+
+      const workerAgents = await readFile(join(cwd, '.omx', 'state', 'team', 'frontier-role', 'workers', 'worker-2', 'AGENTS.md'), 'utf-8');
+      assert.match(workerAgents, /You are operating as the \*\*test-engineer\*\* role/);
+      assert.match(workerAgents, /<identity>Test Engineer<\/identity>/);
+      assert.doesNotMatch(workerAgents, /exact gpt-5\.4-mini model/);
+    } finally {
+      if (typeof previousPath === 'string') process.env.PATH = previousPath;
+      else delete process.env.PATH;
+      await rm(cwd, { recursive: true, force: true });
+      await rm(fakeBinDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not apply mini guidance during scale-up for gpt-5.4-mini-tuned overrides', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'omx-scale-up-mini-tuned-'));
+    const fakeBinDir = await mkdtemp(join(tmpdir(), 'omx-scale-up-mini-tuned-bin-'));
+    const tmuxStubPath = join(fakeBinDir, 'tmux');
+    const previousPath = process.env.PATH;
+
+    try {
+      await writeFile(
+        tmuxStubPath,
+        `#!/bin/sh
+set -eu
+case "\${1:-}" in
+  -V)
+    echo "tmux 3.2a"
+    ;;
+  split-window)
+    echo "%31"
+    ;;
+  list-panes)
+    echo "42424"
+    ;;
+  capture-pane)
+    echo ""
+    ;;
+esac
+exit 0
+`,
+      );
+      await chmod(tmuxStubPath, 0o755);
+      process.env.PATH = `${fakeBinDir}:${previousPath ?? ''}`;
+
+      await mkdir(join(cwd, '.codex', 'prompts'), { recursive: true });
+      await writeFile(join(cwd, '.codex', 'prompts', 'writer.md'), '<identity>You are Writer.</identity>');
+      await writeFile(join(cwd, 'AGENTS.md'), '# Root project instructions\n');
+      await initCommittedGitRepo(cwd);
+      await initTeamState('mini-tuned-root', 'task', 'executor', 1, cwd, undefined, process.env, {
+        workspace_mode: 'worktree',
+        leader_cwd: cwd,
+        team_state_root: join(cwd, '.omx', 'state'),
+      });
+
+      const config = await readTeamConfig('mini-tuned-root', cwd);
+      assert.ok(config);
+      if (!config) return;
+      config.tmux_session = 'omx-team-mini-tuned-root';
+      config.leader_pane_id = '%11';
+      config.workers[0]!.pane_id = '%21';
+      await saveTeamConfig(config, cwd);
+
+      const manifestPath = join(cwd, '.omx', 'state', 'team', 'mini-tuned-root', 'manifest.v2.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf-8')) as { policy?: Record<string, unknown> };
+      manifest.policy = {
+        ...(manifest.policy ?? {}),
+        dispatch_mode: 'transport_direct',
+      };
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const result = await scaleUp(
+        'mini-tuned-root',
+        1,
+        'executor',
+        [{ subject: 'write docs', description: 'write docs', owner: 'worker-2', role: 'writer' }],
+        cwd,
+        {
+          OMX_TEAM_SCALING_ENABLED: '1',
+          OMX_TEAM_SKIP_READY_WAIT: '1',
+          OMX_TEAM_WORKER_LAUNCH_ARGS: '--model gpt-5.4-mini-tuned',
+        },
+      );
+      assert.equal(result.ok, true);
+      if (!result.ok) return;
+
+      const rootAgents = await readFile(join(cwd, '.omx', 'team', 'mini-tuned-root', 'worktrees', 'worker-2', 'AGENTS.md'), 'utf-8');
+      assert.match(rootAgents, /You are operating as the \*\*writer\*\* role/);
+      assert.match(rootAgents, /<identity>You are Writer\.<\/identity>/);
+      assert.doesNotMatch(rootAgents, /exact gpt-5\.4-mini model/);
     } finally {
       if (typeof previousPath === 'string') process.env.PATH = previousPath;
       else delete process.env.PATH;

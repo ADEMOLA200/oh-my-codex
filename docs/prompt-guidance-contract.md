@@ -28,6 +28,28 @@ In this repository, `prompts/*.md` remain the canonical source files even when t
 
 This document is the contributor-oriented index for those surfaces.
 
+## Exact-model mini adaptation seam
+
+OMX also has a narrow **instruction-composition seam** for subagents/workers whose **final resolved model** is exactly `gpt-5.4-mini`.
+That seam is part of prompt delivery, but it is intentionally narrower than the general GPT-5.4 behavioral contract described below.
+
+Contributor rules for that seam:
+
+- Key mini-specific instruction adaptation off the **final resolved model string**, not off role name, lane, or default tier membership.
+- Use **exact string equality** for `gpt-5.4-mini`; do not widen behavior to `gpt-5.4`, `gpt-5.4-mini-tuned`, or other variants.
+- Keep one shared **inner role-instruction composition helper** as the source of truth for model-gated prompt adaptation.
+- Keep `src/team/worker-bootstrap.ts` limited to **outer AGENTS/runtime wrapping**. It should wrap already-composed instructions, not own model-specific adaptation logic.
+- Keep `src/team/role-router.ts` as a raw role-prompt loader unless a minimal plumbing change is unavoidable.
+
+Primary implementation surfaces for this seam:
+
+| Responsibility | Primary sources |
+|---|---|
+| shared inner prompt composition | `src/agents/native-config.ts`, `src/agents/__tests__/native-config.test.ts` |
+| team runtime/scaling plumbing | `src/team/runtime.ts`, `src/team/scaling.ts`, associated runtime/scaling tests |
+| outer wrapper boundary | `src/team/worker-bootstrap.ts`, `src/team/__tests__/worker-bootstrap.test.ts` |
+
+
 ## What this contract is — and is not
 
 This contract is about **how OMX prompts should behave**.
@@ -158,6 +180,7 @@ Keep these separate when editing docs and prompts:
 | Topic | Primary sources |
 |---|---|
 | GPT-5.4 prompt behavior contract | `AGENTS.md`, `templates/AGENTS.md`, canonical XML-tagged role prompt surfaces in `prompts/*.md`, `src/config/generator.ts`, `src/hooks/__tests__/prompt-guidance-*.test.ts` |
+| exact-model mini composition seam | `src/agents/native-config.ts`, `src/team/runtime.ts`, `src/team/scaling.ts`, `src/team/worker-bootstrap.ts`, targeted native/runtime/scaling/bootstrap tests |
 | role/tier/posture routing | `README.md:133-179`, `docs/shared/agent-tiers.md:7-56`, `src/agents/native-config.ts:12-40` |
 
 If a change only affects posture overlays or native agent metadata, document it in the routing docs rather than expanding this contract unnecessarily.
@@ -177,8 +200,9 @@ Before opening a PR that changes prompt text, confirm all of the following:
 1. **Preserve the four core behaviors.** Your change should keep or strengthen compact output, low-risk follow-through, scoped overrides, and grounded tool use/verification.
 2. **Keep role-specific wording role-specific.** The phrasing can differ by role, but the behavior should stay semantically aligned.
 3. **Update scenario examples when behavior changes.** If you change how prompts handle `continue`, `make a PR`, or `merge if CI green`, update the prompt examples and the related tests.
-4. **Do not confuse routing metadata with prompt behavior.** Posture/tier updates belong in routing docs/tests unless they also change prompt prose.
-5. **Update regression coverage when the contract changes.** Start with `src/hooks/__tests__/prompt-guidance-contract.test.ts`, `prompt-guidance-wave-two.test.ts`, `prompt-guidance-scenarios.test.ts`, and `prompt-guidance-catalog.test.ts`.
+4. **Keep the mini-only seam exact and centralized.** If you touch mini adaptation, gate it on the final resolved model with exact `gpt-5.4-mini` equality, keep the shared inner helper as the source of truth, and keep `worker-bootstrap.ts` wrapper-only.
+5. **Do not confuse routing metadata with prompt behavior.** Posture/tier updates belong in routing docs/tests unless they also change prompt prose.
+6. **Update regression coverage when the contract changes.** Start with `src/hooks/__tests__/prompt-guidance-contract.test.ts`, `prompt-guidance-wave-two.test.ts`, `prompt-guidance-scenarios.test.ts`, and `prompt-guidance-catalog.test.ts`; add native/runtime/scaling/bootstrap coverage when the mini-only seam changes.
 
 ## Validation workflow for contributors
 
@@ -191,6 +215,16 @@ node --test \
   dist/hooks/__tests__/prompt-guidance-wave-two.test.js \
   dist/hooks/__tests__/prompt-guidance-scenarios.test.js \
   dist/hooks/__tests__/prompt-guidance-catalog.test.js
+```
+
+If you touch the exact-model `gpt-5.4-mini` composition seam, also run:
+
+```bash
+node --test \
+  dist/agents/__tests__/native-config.test.js \
+  dist/team/__tests__/runtime.test.js \
+  dist/team/__tests__/scaling.test.js \
+  dist/team/__tests__/worker-bootstrap.test.js
 ```
 
 For broader prompt or skill changes, prefer the full suite:

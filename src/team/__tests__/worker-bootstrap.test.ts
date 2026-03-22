@@ -20,6 +20,7 @@ import {
   generateMailboxTriggerMessage,
   generateLeaderMailboxTriggerMessage,
 } from "../worker-bootstrap.js";
+import { composeRoleInstructionsForRole } from "../../agents/native-config.js";
 import type { TeamTask } from "../state.js";
 
 function setMockCodexHome(codexHomePath: string): () => void {
@@ -671,6 +672,41 @@ describe("worker bootstrap", () => {
       assert.match(content, /<!-- OMX:TEAM:ROLE:START -->/);
       assert.match(content, /\*\*writer\*\* role/);
       assert.match(content, /<identity>Writer role prompt<\/identity>/);
+      assert.doesNotMatch(content, /exact gpt-5\.4-mini model/);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("writeWorkerRoleInstructionsFile preserves precomposed mini guidance as wrapper-only content", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "omx-worker-bootstrap-"));
+    try {
+      const overlay = generateWorkerOverlay("mini-role-team");
+      const basePath = await writeTeamWorkerInstructionsFile(
+        "mini-role-team",
+        cwd,
+        overlay,
+      );
+      const composedRoleInstructions = composeRoleInstructionsForRole(
+        "writer",
+        "---\ndescription: demo\n---\n\n<identity>You are Writer.</identity>",
+        "gpt-5.4-mini",
+      );
+      const outPath = await writeWorkerRoleInstructionsFile(
+        "mini-role-team",
+        "worker-2",
+        cwd,
+        basePath,
+        "writer",
+        composedRoleInstructions,
+      );
+
+      const content = await readFile(outPath, "utf8");
+      assert.match(content, /<identity>You are Writer\.<\/identity>/);
+      assert.match(content, /exact gpt-5\.4-mini model/);
+      assert.match(content, /strict execution order: inspect -> plan -> act -> verify/);
+      assert.equal((content.match(/<exact_model_guidance>/g) || []).length, 1);
+      assert.equal((content.match(/resolved_model: gpt-5\.4-mini/g) || []).length, 1);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

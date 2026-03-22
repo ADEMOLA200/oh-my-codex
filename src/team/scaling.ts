@@ -57,12 +57,13 @@ import {
   removeWorkerWorktreeRootAgentsFile,
 } from './worker-bootstrap.js';
 import { loadRolePrompt } from './role-router.js';
+import { composeRoleInstructionsForRole } from '../agents/native-config.js';
 import { codexPromptsDir } from '../utils/paths.js';
 import {
+  parseTeamWorkerLaunchArgs,
   resolveTeamWorkerLaunchArgs,
-  isLowComplexityAgentType,
+  resolveAgentDefaultModel,
   resolveAgentReasoningEffort,
-  resolveTeamLowComplexityDefaultModel,
   type TeamReasoningEffort,
 } from './model-contract.js';
 import { resolveCanonicalTeamStateRoot } from './state-root.js';
@@ -346,8 +347,14 @@ export async function scaleUp(
       const workerCwd = workerWorkspace ? workerWorkspace.worktreePath : leaderCwd;
 
       // Build startup command and create tmux pane
-      const rolePromptContent = await loadRolePrompt(workerRole, join(leaderCwd, '.codex', 'prompts'))
+      const rawRolePromptContent = await loadRolePrompt(workerRole, join(leaderCwd, '.codex', 'prompts'))
         ?? await loadRolePrompt(workerRole, codexPromptsDir());
+      const preferredReasoning = resolveAgentReasoningEffort(workerRole) ?? resolveAgentReasoningEffort(agentType);
+      const workerLaunchArgs = resolveWorkerLaunchArgsForScaling(env, workerRole, preferredReasoning);
+      const resolvedWorkerModel = parseTeamWorkerLaunchArgs(workerLaunchArgs).modelOverride ?? undefined;
+      const rolePromptContent = rawRolePromptContent
+        ? composeRoleInstructionsForRole(workerRole, rawRolePromptContent, resolvedWorkerModel)
+        : null;
       const teamInstructionsPath = join(leaderCwd, '.omx', 'state', 'team', sanitized, 'worker-agents.md');
       const instructionsFilePath = workerWorkspace
         ? await writeWorkerWorktreeRootAgentsFile({
@@ -374,8 +381,6 @@ export async function scaleUp(
         }
         extraEnv.OMX_TEAM_WORKTREE_DETACHED = workerWorkspace.detached ? '1' : '0';
       }
-      const preferredReasoning = resolveAgentReasoningEffort(workerRole) ?? resolveAgentReasoningEffort(agentType);
-      const workerLaunchArgs = resolveWorkerLaunchArgsForScaling(env, agentType, preferredReasoning);
       const cmd = buildWorkerStartupCommand(
         sanitized,
         workerIndex,
@@ -455,7 +460,7 @@ export async function scaleUp(
         teamStateRoot,
         leaderCwd,
         workerRole,
-        rolePromptContent: rolePromptContent ?? undefined,
+        rolePromptContent: rawRolePromptContent ?? undefined,
         worktreeRootAgentsCanonical: Boolean(workerWorkspace?.worktreePath),
       });
 
@@ -801,9 +806,7 @@ function resolveWorkerLaunchArgsForScaling(
   preferredReasoning?: TeamReasoningEffort,
 ): string[] {
   const inheritedArgs: string[] = [];
-  const fallbackModel = isLowComplexityAgentType(agentType)
-    ? resolveTeamLowComplexityDefaultModel(env.CODEX_HOME)
-    : undefined;
+  const fallbackModel = resolveAgentDefaultModel(agentType, env.CODEX_HOME);
 
   return resolveTeamWorkerLaunchArgs({
     existingRaw: env.OMX_TEAM_WORKER_LAUNCH_ARGS,

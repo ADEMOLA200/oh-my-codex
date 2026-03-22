@@ -17,6 +17,8 @@ import {
 import { getRootModelName } from "../config/generator.js";
 import { codexAgentsDir } from "../utils/paths.js";
 
+export const EXACT_GPT_5_4_MINI_MODEL = "gpt-5.4-mini";
+
 const POSTURE_OVERLAYS: Record<AgentDefinition["posture"], string> = {
   "frontier-orchestrator": [
     "<posture_overlay>",
@@ -84,6 +86,18 @@ const MODEL_CLASS_OVERLAYS: Record<AgentDefinition["modelClass"], string> = {
   ].join("\n"),
 };
 
+const EXACT_MINI_MODEL_OVERLAY = [
+  "<exact_model_guidance>",
+  "",
+  `This role is executing under the exact ${EXACT_GPT_5_4_MINI_MODEL} model.`,
+  "- Use a strict execution order: inspect -> plan -> act -> verify.",
+  "- Treat completion criteria as explicit: only report done after the requested work is implemented and fresh verification passes.",
+  "- If requirements are ambiguous or a blocker appears, state the blocker plainly and stop guessing until the missing decision is resolved.",
+  "- Do not bluff, pad, or invent results; report missing evidence and incomplete work honestly.",
+  "",
+  "</exact_model_guidance>",
+].join("\n");
+
 export interface GeneratedNativeAgentConfig {
   name: string;
   description: string;
@@ -96,6 +110,13 @@ interface AgentModelResolutionOptions {
   codexHomeOverride?: string;
   configTomlContent?: string;
   env?: NodeJS.ProcessEnv;
+}
+
+interface RoleInstructionMetadata {
+  name: string;
+  posture: AgentDefinition["posture"];
+  modelClass: AgentDefinition["modelClass"];
+  routingRole: AgentDefinition["routingRole"];
 }
 
 function readConfigTomlContent(
@@ -146,24 +167,72 @@ function resolveAgentModel(
   }
 }
 
-function buildPromptInstructions(
-  agent: AgentDefinition,
+function isExactMiniModel(resolvedModel?: string | null): boolean {
+  return resolvedModel?.trim() === EXACT_GPT_5_4_MINI_MODEL;
+}
+
+export function composeRoleInstructions(
   promptContent: string,
+  metadata: RoleInstructionMetadata | null,
+  resolvedModel?: string,
 ): string {
   const instructions = stripFrontmatter(promptContent);
-  return [
-    instructions,
-    "",
-    POSTURE_OVERLAYS[agent.posture],
-    "",
-    MODEL_CLASS_OVERLAYS[agent.modelClass],
-    "",
-    "## OMX Agent Metadata",
-    `- role: ${agent.name}`,
-    `- posture: ${agent.posture}`,
-    `- model_class: ${agent.modelClass}`,
-    `- routing_role: ${agent.routingRole}`,
-  ].join("\n");
+  const parts = [instructions];
+
+  if (metadata) {
+    parts.push(
+      "",
+      POSTURE_OVERLAYS[metadata.posture],
+      "",
+      MODEL_CLASS_OVERLAYS[metadata.modelClass],
+    );
+  }
+
+  if (isExactMiniModel(resolvedModel)) {
+    parts.push("", EXACT_MINI_MODEL_OVERLAY);
+  }
+
+  const metadataLines = [];
+  if (metadata) {
+    metadataLines.push(
+      "## OMX Agent Metadata",
+      `- role: ${metadata.name}`,
+      `- posture: ${metadata.posture}`,
+      `- model_class: ${metadata.modelClass}`,
+      `- routing_role: ${metadata.routingRole}`,
+    );
+  }
+  if (resolvedModel) {
+    if (metadataLines.length === 0) {
+      metadataLines.push("## OMX Agent Metadata");
+    }
+    metadataLines.push(`- resolved_model: ${resolvedModel}`);
+  }
+  if (metadataLines.length > 0) {
+    parts.push("", ...metadataLines);
+  }
+
+  return parts.join("\n");
+}
+
+export function composeRoleInstructionsForRole(
+  roleName: string,
+  promptContent: string,
+  resolvedModel?: string,
+): string {
+  const agent = AGENT_DEFINITIONS[roleName];
+  return composeRoleInstructions(
+    promptContent,
+    agent
+      ? {
+          name: agent.name,
+          posture: agent.posture,
+          modelClass: agent.modelClass,
+          routingRole: agent.routingRole,
+        }
+      : null,
+    resolvedModel,
+  );
 }
 
 /**
@@ -226,11 +295,12 @@ export function generateAgentToml(
   promptContent: string,
   options: AgentModelResolutionOptions = {},
 ): string {
+  const resolvedModel = resolveAgentModel(agent, options);
   return generateStandaloneAgentToml({
     name: agent.name,
     description: agent.description,
-    developerInstructions: buildPromptInstructions(agent, promptContent),
-    model: resolveAgentModel(agent, options),
+    developerInstructions: composeRoleInstructions(promptContent, agent, resolvedModel),
+    model: resolvedModel,
     reasoningEffort: agent.reasoningEffort,
   });
 }

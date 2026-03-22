@@ -95,6 +95,7 @@ import {
   writeWorkerRoleInstructionsFile,
 } from './worker-bootstrap.js';
 import { loadRolePrompt } from './role-router.js';
+import { composeRoleInstructionsForRole } from '../agents/native-config.js';
 import { codexPromptsDir } from '../utils/paths.js';
 import { type TeamPhase, type TerminalPhase } from './orchestrator.js';
 import {
@@ -1469,8 +1470,20 @@ export async function startTeam(
       const workerRole = taskRoles.length > 0 && uniqueTaskRoles.size === 1
         ? taskRoles[0]
         : agentType;
-      const rolePromptContent = await loadRolePrompt(workerRole, join(leaderCwd, '.codex', 'prompts'))
+      const rawRolePromptContent = await loadRolePrompt(workerRole, join(leaderCwd, '.codex', 'prompts'))
         ?? await loadRolePrompt(workerRole, codexPromptsDir());
+      const preferredReasoning = resolveAgentReasoningEffort(workerRole) ?? resolveAgentReasoningEffort(agentType);
+      const workerLaunchArgs = resolveWorkerLaunchArgsFromEnv(
+        process.env,
+        workerRole,
+        undefined,
+        preferredReasoning,
+        workerCliPlan[i - 1],
+      );
+      const resolvedWorkerModel = parseTeamWorkerLaunchArgs(workerLaunchArgs).modelOverride ?? undefined;
+      const rolePromptContent = rawRolePromptContent
+        ? composeRoleInstructionsForRole(workerRole, rawRolePromptContent, resolvedWorkerModel)
+        : null;
       const workerWorktreePath = workerWorkspace.worktreePath ?? undefined;
       const fallbackInstructionsPath = workerInstructionsPath ?? join(leaderCwd, 'AGENTS.md');
       const instructionsFilePath = workerWorktreePath
@@ -1490,21 +1503,13 @@ export async function startTeam(
         teamStateRoot,
         leaderCwd,
         workerRole,
-        rolePromptContent: rolePromptContent ?? undefined,
+        rolePromptContent: rawRolePromptContent ?? undefined,
         worktreeRootAgentsCanonical: Boolean(workerWorkspace.worktreePath),
       });
       const trigger = generateTriggerMessage(
         workerName,
         sanitized,
         resolveInstructionStateRoot(workerWorkspace.worktreePath),
-      );
-      const preferredReasoning = resolveAgentReasoningEffort(workerRole) ?? resolveAgentReasoningEffort(agentType);
-      const workerLaunchArgs = resolveWorkerLaunchArgsFromEnv(
-        process.env,
-        workerRole,
-        undefined,
-        preferredReasoning,
-        workerCliPlan[i - 1],
       );
       const initialPrompt = workerCliPlan[i - 1] === 'gemini' ? trigger : undefined;
       if (initialPrompt) {
