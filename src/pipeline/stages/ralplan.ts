@@ -7,6 +7,15 @@
 
 import type { PipelineStage, StageContext, StageResult } from '../types.js';
 import { isPlanningComplete, readPlanningArtifacts } from '../../planning/artifacts.js';
+import {
+  runRalplanConsensus,
+  type RalplanConsensusExecutor,
+} from '../../ralplan/runtime.js';
+
+export interface CreateRalplanStageOptions {
+  executor?: RalplanConsensusExecutor;
+  maxIterations?: number;
+}
 
 /**
  * Create a RALPLAN pipeline stage.
@@ -15,11 +24,11 @@ import { isPlanningComplete, readPlanningArtifacts } from '../../planning/artifa
  * architect, and critic agents. It outputs a plan file that downstream
  * stages (team-exec) consume.
  *
- * This is a structural adapter — actual agent orchestration happens at
- * the skill layer. The stage manages lifecycle, artifact discovery, and
- * skip detection.
+ * By default this remains a structural adapter — actual agent orchestration
+ * happens at the skill layer. When an executor is provided, the stage can
+ * drive the real ralplan runtime and persist live mode state.
  */
-export function createRalplanStage(): PipelineStage {
+export function createRalplanStage(options: CreateRalplanStageOptions = {}): PipelineStage {
   return {
     name: 'ralplan',
 
@@ -30,6 +39,38 @@ export function createRalplanStage(): PipelineStage {
     async run(ctx: StageContext): Promise<StageResult> {
       const startTime = Date.now();
       try {
+        if (options.executor) {
+          const runtimeResult = await runRalplanConsensus(options.executor, {
+            task: ctx.task,
+            cwd: ctx.cwd,
+            maxIterations: options.maxIterations,
+          });
+
+          const planningArtifacts = readPlanningArtifacts(ctx.cwd);
+          return {
+            status: runtimeResult.status === 'completed' ? 'completed' : 'failed',
+            artifacts: {
+              plansDir: planningArtifacts.plansDir,
+              specsDir: planningArtifacts.specsDir,
+              task: ctx.task,
+              prdPaths: planningArtifacts.prdPaths,
+              testSpecPaths: planningArtifacts.testSpecPaths,
+              deepInterviewSpecPaths: planningArtifacts.deepInterviewSpecPaths,
+              planningComplete: runtimeResult.planningComplete,
+              stage: 'ralplan',
+              runtime: true,
+              iteration: runtimeResult.iteration,
+              latestPlanPath: runtimeResult.latestPlanPath,
+              drafts: runtimeResult.drafts,
+              architectReviews: runtimeResult.architectReviews,
+              criticReviews: runtimeResult.criticReviews,
+              ...runtimeResult.artifacts,
+            },
+            duration_ms: Date.now() - startTime,
+            error: runtimeResult.error,
+          };
+        }
+
         const planningArtifacts = readPlanningArtifacts(ctx.cwd);
 
         return {

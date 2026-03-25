@@ -3,11 +3,17 @@
  * All execution modes (autopilot, autoresearch, deep-interview, ralph, ultrawork, team, ultraqa, ralplan) share this base.
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { withModeRuntimeContext } from '../state/mode-state-context.js';
 import { validateAndNormalizeRalphState } from '../ralph/contract.js';
+import {
+  getBaseStateDir,
+  getReadScopedStateDirs,
+  getReadScopedStatePaths,
+  getStatePath,
+  resolveStateScope,
+} from '../mcp/state-paths.js';
 
 export interface ModeState {
   active: boolean;
@@ -64,11 +70,7 @@ function normalizeRalphModeStateOrThrow(state: ModeState): ModeState {
 }
 
 function stateDir(projectRoot?: string): string {
-  return join(projectRoot || process.cwd(), '.omx', 'state');
-}
-
-function statePath(mode: string, projectRoot?: string): string {
-  return join(stateDir(projectRoot), `${mode}-state.json`);
+  return getBaseStateDir(projectRoot);
 }
 
 export async function assertModeStartAllowed(
@@ -79,21 +81,24 @@ export async function assertModeStartAllowed(
 
   for (const other of EXCLUSIVE_MODES) {
     if (other === mode) continue;
-    const otherPath = statePath(other, projectRoot);
-    if (!existsSync(otherPath)) continue;
-    try {
-      const raw = await readFile(otherPath, 'utf-8');
-      const otherState = JSON.parse(raw) as { active?: unknown };
-      if (otherState.active) {
-        throw new Error(`Cannot start ${mode}: ${other} is already active. Run cancel first.`);
+    const otherPaths = await getReadScopedStatePaths(other, projectRoot);
+    for (const otherPath of otherPaths) {
+      if (!existsSync(otherPath)) continue;
+      try {
+        const raw = await readFile(otherPath, 'utf-8');
+        const otherState = JSON.parse(raw) as { active?: unknown };
+        if (otherState.active) {
+          throw new Error(`Cannot start ${mode}: ${other} is already active. Run cancel first.`);
+        }
+        break;
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException;
+        if (err?.message.includes('Cannot start')) throw err;
+        if (err?.code === 'ENOENT') continue;
+        throw new Error(
+          `Cannot start ${mode}: ${other} state file is malformed or unreadable (${otherPath}). Run cancel or repair the state file.`
+        );
       }
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      if (err?.message.includes('Cannot start')) throw err;
-      if (err?.code === 'ENOENT') continue;
-      throw new Error(
-        `Cannot start ${mode}: ${other} state file is malformed or unreadable (${otherPath}). Run cancel or repair the state file.`
-      );
     }
   }
 }
@@ -111,6 +116,8 @@ export async function startMode(
   await mkdir(dir, { recursive: true });
 
   await assertModeStartAllowed(mode, projectRoot);
+  const scope = await resolveStateScope(projectRoot);
+  await mkdir(scope.stateDir, { recursive: true });
 
   const stateBase: ModeState = {
     active: true,
@@ -126,7 +133,7 @@ export async function startMode(
   const state = mode === 'ralph'
     ? normalizeRalphModeStateOrThrow(withContext)
     : withContext;
-  await writeFile(statePath(mode, projectRoot), JSON.stringify(state, null, 2));
+  await writeFile(getStatePath(mode, projectRoot, scope.sessionId), JSON.stringify(state, null, 2));
   return state;
 }
 
@@ -134,13 +141,16 @@ export async function startMode(
  * Read current mode state
  */
 export async function readModeState(mode: string, projectRoot?: string): Promise<ModeState | null> {
-  const path = statePath(mode, projectRoot);
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(await readFile(path, 'utf-8'));
-  } catch {
-    return null;
+  const paths = await getReadScopedStatePaths(mode, projectRoot);
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    try {
+      return JSON.parse(await readFile(path, 'utf-8'));
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 /**
@@ -153,13 +163,15 @@ export async function updateModeState(
 ): Promise<ModeState> {
   const current = await readModeState(mode, projectRoot);
   if (!current) throw new Error(`Mode ${mode} not found`);
+  const scope = await resolveStateScope(projectRoot);
+  await mkdir(scope.stateDir, { recursive: true });
 
   const updatedBase = { ...current, ...updates };
   const normalizedBase = mode === 'ralph'
     ? normalizeRalphModeStateOrThrow(updatedBase as ModeState)
     : updatedBase;
   const updated = withModeRuntimeContext(current, normalizedBase) as ModeState;
-  await writeFile(statePath(mode, projectRoot), JSON.stringify(updated, null, 2));
+  await writeFile(getStatePath(mode, projectRoot, scope.sessionId), JSON.stringify(updated, null, 2));
   return updated;
 }
 
@@ -181,20 +193,23 @@ export async function cancelMode(mode: string, projectRoot?: string): Promise<vo
  * Cancel all active modes
  */
 export async function cancelAllModes(projectRoot?: string): Promise<string[]> {
-  const { readdir } = await import('fs/promises');
-  const dir = stateDir(projectRoot);
+  const dirs = await getReadScopedStateDirs(projectRoot);
   const cancelled: string[] = [];
+  const seenModes = new Set<string>();
 
-  if (!existsSync(dir)) return cancelled;
-
-  const files = await readdir(dir);
-  for (const f of files) {
-    if (!f.endsWith('-state.json')) continue;
-    const mode = f.replace('-state.json', '');
-    const state = await readModeState(mode, projectRoot);
-    if (state?.active) {
-      await cancelMode(mode, projectRoot);
-      cancelled.push(mode);
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    const files = await readdir(dir);
+    for (const f of files) {
+      if (!f.endsWith('-state.json')) continue;
+      const mode = f.replace('-state.json', '');
+      if (seenModes.has(mode)) continue;
+      seenModes.add(mode);
+      const state = await readModeState(mode, projectRoot);
+      if (state?.active) {
+        await cancelMode(mode, projectRoot);
+        cancelled.push(mode);
+      }
     }
   }
   return cancelled;
@@ -204,19 +219,22 @@ export async function cancelAllModes(projectRoot?: string): Promise<string[]> {
  * List all active modes
  */
 export async function listActiveModes(projectRoot?: string): Promise<Array<{ mode: string; state: ModeState }>> {
-  const { readdir } = await import('fs/promises');
-  const dir = stateDir(projectRoot);
+  const dirs = await getReadScopedStateDirs(projectRoot);
   const active: Array<{ mode: string; state: ModeState }> = [];
+  const seenModes = new Set<string>();
 
-  if (!existsSync(dir)) return active;
-
-  const files = await readdir(dir);
-  for (const f of files) {
-    if (!f.endsWith('-state.json')) continue;
-    const mode = f.replace('-state.json', '');
-    const state = await readModeState(mode, projectRoot);
-    if (state?.active) {
-      active.push({ mode, state });
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    const files = await readdir(dir);
+    for (const f of files) {
+      if (!f.endsWith('-state.json')) continue;
+      const mode = f.replace('-state.json', '');
+      if (seenModes.has(mode)) continue;
+      seenModes.add(mode);
+      const state = await readModeState(mode, projectRoot);
+      if (state?.active) {
+        active.push({ mode, state });
+      }
     }
   }
   return active;

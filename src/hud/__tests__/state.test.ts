@@ -208,6 +208,21 @@ describe('additional HUD mode state readers', () => {
     });
   });
 
+  it('prefers session-scoped ralplan state over root fallback', async () => {
+    await withTempRepo('omx-hud-ralplan-session-', async (cwd) => {
+      const rootStateDir = join(cwd, '.omx', 'state');
+      const sessionId = 'sess-ralplan-authority';
+      const sessionStateDir = join(rootStateDir, 'sessions', sessionId);
+      await mkdir(sessionStateDir, { recursive: true });
+      await writeFile(join(rootStateDir, 'session.json'), JSON.stringify({ session_id: sessionId }));
+      await writeFile(join(rootStateDir, 'ralplan-state.json'), JSON.stringify({ active: true, current_phase: 'draft', iteration: 9 }));
+      await writeFile(join(sessionStateDir, 'ralplan-state.json'), JSON.stringify({ active: true, current_phase: 'critic-review', iteration: 2, planning_complete: false }));
+
+      const state = await readRalplanState(cwd);
+      assert.deepEqual(state, { active: true, current_phase: 'critic-review', iteration: 2, planning_complete: false });
+    });
+  });
+
   it('reads deep-interview input lock from nested state payload', async () => {
     await withTempRepo('omx-hud-interview-', async (cwd) => {
       await writeModeState(cwd, 'deep-interview', { active: true, current_phase: 'intent-first', input_lock: { active: true } });

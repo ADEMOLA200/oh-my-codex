@@ -25,6 +25,7 @@ export {
 } from './orchestrator.js';
 
 export { createRalplanStage } from './stages/ralplan.js';
+export type { CreateRalplanStageOptions } from './stages/ralplan.js';
 export { createTeamExecStage, buildTeamInstruction } from './stages/team-exec.js';
 export type { TeamExecStageOptions, TeamExecDescriptor } from './stages/team-exec.js';
 export { createRalphVerifyStage, buildRalphInstruction } from './stages/ralph-verify.js';

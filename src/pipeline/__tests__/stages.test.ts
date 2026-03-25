@@ -103,6 +103,36 @@ describe('RALPLAN Stage', () => {
     assert.equal(artifacts.planningComplete, false);
   });
 
+  it('can execute a real ralplan runtime when an executor is provided', async () => {
+    const stage = createRalplanStage({
+      executor: {
+        async draft() {
+          const plansDir = join(tempDir, '.omx', 'plans');
+          await mkdir(plansDir, { recursive: true });
+          const prdPath = join(plansDir, 'prd-runtime.md');
+          await writeFile(prdPath, '# Runtime Plan\n');
+          await writeFile(join(plansDir, 'test-spec-runtime.md'), '# Runtime Tests\n');
+          return { summary: 'drafted', planPath: prdPath, artifacts: { runtimeDrafted: true } };
+        },
+        async architectReview() {
+          return { verdict: 'approve', summary: 'architect ok' };
+        },
+        async criticReview() {
+          return { verdict: 'approve', summary: 'critic ok' };
+        },
+      },
+    });
+
+    const result = await stage.run(makeCtx({ task: 'live ralplan run' }));
+    const artifacts = result.artifacts as Record<string, unknown>;
+
+    assert.equal(result.status, 'completed');
+    assert.equal(artifacts.runtime, true);
+    assert.equal(artifacts.planningComplete, true);
+    assert.equal(artifacts.iteration, 1);
+    assert.equal(artifacts.runtimeDrafted, true);
+  });
+
   it('canSkip returns false for non-prd plan files', async () => {
     const plansDir = join(tempDir, '.omx', 'plans');
     await mkdir(plansDir, { recursive: true });
