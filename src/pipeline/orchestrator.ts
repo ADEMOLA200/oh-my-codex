@@ -34,6 +34,11 @@ const MODE_NAME = 'autopilot' as const;
 export async function runPipeline(config: PipelineConfig): Promise<PipelineResult> {
   validateConfig(config);
 
+  if (config.name === 'autopilot' && config.autopilotController?.enabled === true) {
+    const { runAutopilotController } = await import('../autopilot/controller.js');
+    return runAutopilotController(config);
+  }
+
   const cwd = config.cwd ?? process.cwd();
   const maxRalphIterations = config.maxRalphIterations ?? 10;
   const workerCount = config.workerCount ?? 2;
@@ -295,5 +300,15 @@ export function createAutopilotPipelineConfig(
     workerCount: options.workerCount ?? 2,
     agentType: options.agentType ?? 'executor',
     onStageTransition: options.onStageTransition,
+    autopilotController: {
+      enabled: true,
+      stageByAction: {
+        plan: options.stages[0]?.name ?? 'ralplan',
+        execute: options.stages[1]?.name ?? 'team-exec',
+        verify: options.stages[2]?.name ?? 'ralph-verify',
+      },
+      maxReplanAttempts: 1,
+      captureRuntimeSnapshot: true,
+    },
   };
 }

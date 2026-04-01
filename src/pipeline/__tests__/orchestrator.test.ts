@@ -12,6 +12,7 @@ import {
   createAutopilotPipelineConfig,
 } from '../orchestrator.js';
 import type { PipelineConfig, PipelineStage, StageContext, StageResult } from '../types.js';
+import { AUTOPILOT_CONTROLLER_ENTRYPOINT } from '../../autopilot/controller.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -493,6 +494,7 @@ describe('Pipeline Orchestrator', () => {
       assert.equal(config.workerCount, 2);
       assert.equal(config.agentType, 'executor');
       assert.equal(config.stages.length, 1);
+      assert.equal(config.autopilotController?.enabled, true);
     });
 
     it('accepts custom overrides', () => {
@@ -511,6 +513,38 @@ describe('Pipeline Orchestrator', () => {
       assert.equal(config.agentType, 'architect');
       assert.equal(config.cwd, '/tmp/test');
       assert.equal(config.sessionId, 'session-1');
+      assert.equal(config.autopilotController?.stageByAction?.plan, 'a');
+      assert.equal(config.autopilotController?.stageByAction?.execute, 'b');
+    });
+  });
+
+  describe('autopilot controller compatibility wrapper', () => {
+    it('delegates autopilot configs to the runtime-controller entrypoint', async () => {
+      const config = createAutopilotPipelineConfig('ship autopilot controller', {
+        cwd: tempDir,
+        stages: [
+          makeStage('ralplan'),
+          makeStage('team-exec', {
+            artifacts: {
+              riskLevel: 'high',
+              verificationEvidence: 'stale',
+              evidenceSummary: 'execution changed multiple seams',
+            },
+          }),
+          makeStage('ralph-verify'),
+        ],
+      });
+
+      const result = await runPipeline(config);
+
+      assert.equal(result.status, 'completed');
+      const raw = await readFile(join(tempDir, '.omx', 'state', 'autopilot-state.json'), 'utf-8');
+      const state = JSON.parse(raw);
+      assert.equal(state.autopilot_entrypoint, AUTOPILOT_CONTROLLER_ENTRYPOINT);
+      assert.deepEqual(
+        state.autopilot_controller_decisions.map((entry: { action: string }) => entry.action),
+        ['plan', 'execute', 'verify', 'finish'],
+      );
     });
   });
 });

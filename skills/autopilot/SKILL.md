@@ -27,7 +27,9 @@ Most non-trivial software tasks require coordinated phases: understanding requir
 </Why_This_Exists>
 
 <Execution_Policy>
-- Each phase must complete before the next begins
+- The visible `$autopilot` entry contract stays stable while the internal runtime-controller may adaptively choose the next action
+- Verification is part of control, not only a terminal stage; capture fresh evidence whenever risk or stale execution evidence demands it
+- Each phase must complete before the next begins unless the controller explicitly routes to replan/verification based on new evidence
 - Parallel execution is used within phases where possible (Phase 2 and Phase 4)
 - QA cycles repeat up to 5 times; if the same error persists 3 times, stop and report the fundamental issue
 - Validation requires approval from all reviewers; rejected items get fixed and re-validated
@@ -203,10 +205,15 @@ deep-interview -> ralplan -> autopilot
 3. Specify constraints -- "using TypeScript", "with PostgreSQL"
 4. Let it run -- avoid interrupting unless truly needed
 
-## Pipeline Orchestrator (v0.8+)
+## Runtime Controller + Pipeline Compatibility
 
-Autopilot can be driven by the configurable pipeline orchestrator (`src/pipeline/`), which
-sequences stages through a uniform `PipelineStage` interface:
+Autopilot now uses an internal runtime-controller (`src/autopilot/controller.ts`) as the
+authoritative entrypoint for autopilot execution. The controller preserves the visible
+`$autopilot` shell while recording decision reasons, controller ledger state, and compatibility
+views in the existing autopilot mode-state file.
+
+The pipeline orchestrator (`src/pipeline/`) remains the compatibility shell/fallback layer and
+still exposes stage adapters through a uniform `PipelineStage` interface:
 
 ```
 RALPLAN (consensus planning) -> team-exec (Codex CLI workers) -> ralph-verify (architect verification)
@@ -221,8 +228,10 @@ workerCount = 2            # Number of Codex CLI team workers
 agentType = "executor"     # Agent type for team workers
 ```
 
-The pipeline persists state via `pipeline-state.json` and supports resume from the last
-incomplete stage. See `src/pipeline/orchestrator.ts` for the full API.
+The controller persists state via `.omx/state/autopilot-state.json`, keeps `current_phase`
+HUD-compatible, records controller decisions alongside derived pipeline stage results, and
+supports resume from the last incomplete step. See `src/autopilot/controller.ts` and
+`src/pipeline/orchestrator.ts` for the full API surface.
 
 ## Troubleshooting
 

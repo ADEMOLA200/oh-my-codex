@@ -63,6 +63,8 @@ export function createTeamExecStage(options: TeamExecStageOptions = {}): Pipelin
           agentType,
           availableAgentTypes,
           staffingPlan,
+          bootstrapCommand: staffingPlan.launchHints.shellCommand,
+          postLaunchLaneAllocation: staffingPlan.allocations,
           useWorktrees: options.useWorktrees ?? false,
           cwd: ctx.cwd,
           extraEnv: options.extraEnv,
@@ -106,6 +108,8 @@ export interface TeamExecDescriptor {
   agentType: string;
   availableAgentTypes: string[];
   staffingPlan: ReturnType<typeof buildFollowupStaffingPlan>;
+  bootstrapCommand: string;
+  postLaunchLaneAllocation: ReturnType<typeof buildFollowupStaffingPlan>['allocations'];
   useWorktrees: boolean;
   cwd: string;
   extraEnv?: Record<string, string>;
@@ -115,6 +119,5 @@ export interface TeamExecDescriptor {
  * Build the `omx team` CLI instruction from a descriptor.
  */
 export function buildTeamInstruction(descriptor: TeamExecDescriptor): string {
-  const launchCommand = `omx team ${descriptor.workerCount}:${descriptor.agentType} ${JSON.stringify(descriptor.task)}`;
-  return `${launchCommand} # staffing=${descriptor.staffingPlan.staffingSummary} # verify=${descriptor.staffingPlan.verificationPlan.summary}`;
+  return `${descriptor.bootstrapCommand} # staffing=${descriptor.staffingPlan.staffingSummary} # verify=${descriptor.staffingPlan.verificationPlan.summary}`;
 }

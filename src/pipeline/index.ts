@@ -8,6 +8,8 @@
  */
 
 export type {
+  AutopilotControllerAction,
+  AutopilotControllerOptions,
   PipelineConfig,
   PipelineModeStateExtension,
   PipelineResult,
@@ -29,3 +31,17 @@ export { createTeamExecStage, buildTeamInstruction } from './stages/team-exec.js
 export type { TeamExecStageOptions, TeamExecDescriptor } from './stages/team-exec.js';
 export { createRalphVerifyStage, buildRalphInstruction } from './stages/ralph-verify.js';
 export type { RalphVerifyStageOptions, RalphVerifyDescriptor } from './stages/ralph-verify.js';
+export {
+  AUTOPILOT_CONTROLLER_ENTRYPOINT,
+  canResumeAutopilotController,
+  cancelAutopilotController,
+  chooseAutopilotControllerAction,
+  readAutopilotControllerState,
+  runAutopilotController,
+} from '../autopilot/index.js';
+export type {
+  AutopilotControllerStateExtension,
+  AutopilotDecisionLog,
+  RunAutopilotControllerOptions,
+  RuntimeBridgeSummary,
+} from '../autopilot/index.js';

@@ -159,6 +159,8 @@ describe('Team Exec Stage', () => {
     assert.ok(Array.isArray(descriptor.availableAgentTypes));
     assert.ok((descriptor.availableAgentTypes as unknown[]).length > 0);
     assert.equal(typeof (descriptor.staffingPlan as Record<string, unknown>).staffingSummary, 'string');
+    assert.equal(typeof descriptor.bootstrapCommand, 'string');
+    assert.ok(Array.isArray(descriptor.postLaunchLaneAllocation));
   });
 
   it('falls back to raw task when no ralplan artifacts exist', async () => {
@@ -168,6 +170,10 @@ describe('Team Exec Stage', () => {
     const descriptor = (result.artifacts as Record<string, unknown>).teamDescriptor as Record<string, unknown>;
     assert.equal(descriptor.task, 'raw task description');
     assert.equal(typeof (descriptor.staffingPlan as Record<string, unknown>).staffingSummary, 'string');
+    assert.equal(
+      descriptor.bootstrapCommand,
+      ((descriptor.staffingPlan as Record<string, unknown>).launchHints as Record<string, unknown>).shellCommand,
+    );
   });
 
   describe('buildTeamInstruction', () => {
@@ -181,6 +187,8 @@ describe('Team Exec Stage', () => {
         agentType: 'executor',
         availableAgentTypes: ['executor', 'test-engineer'],
         staffingPlan,
+        bootstrapCommand: staffingPlan.launchHints.shellCommand,
+        postLaunchLaneAllocation: staffingPlan.allocations,
         useWorktrees: false,
         cwd: '/tmp/test',
       });
@@ -202,6 +210,8 @@ describe('Team Exec Stage', () => {
         agentType: 'executor',
         availableAgentTypes: ['executor', 'test-engineer'],
         staffingPlan,
+        bootstrapCommand: staffingPlan.launchHints.shellCommand,
+        postLaunchLaneAllocation: staffingPlan.allocations,
         useWorktrees: false,
         cwd: '/tmp',
       });
@@ -256,6 +266,8 @@ describe('Ralph Verify Stage', () => {
     assert.ok(execArtifacts.teamDescriptor);
     assert.ok(Array.isArray(descriptor.availableAgentTypes));
     assert.equal(typeof (descriptor.staffingPlan as Record<string, unknown>).staffingSummary, 'string');
+    assert.equal((descriptor.handoffPolicy as Record<string, unknown>).requiresAutopilotHandoff, true);
+    assert.match(String((descriptor.handoffPolicy as Record<string, unknown>).exclusivityGuard), /cannot-overlap/);
   });
 
   describe('buildRalphInstruction', () => {
@@ -268,6 +280,11 @@ describe('Ralph Verify Stage', () => {
         availableAgentTypes: ['architect', 'executor', 'test-engineer'],
         staffingPlan,
         executionArtifacts: {},
+        handoffPolicy: {
+          requiresAutopilotHandoff: true,
+          exclusivityGuard: 'autopilot-and-ralph-cannot-overlap',
+          recommendedTransition: 'finish_autopilot_then_start_ralph',
+        },
       });
 
       assert.match(instruction, /max_iterations=15/);
@@ -287,6 +304,11 @@ describe('Ralph Verify Stage', () => {
         availableAgentTypes: ['architect', 'executor', 'test-engineer'],
         staffingPlan,
         executionArtifacts: {},
+        handoffPolicy: {
+          requiresAutopilotHandoff: true,
+          exclusivityGuard: 'autopilot-and-ralph-cannot-overlap',
+          recommendedTransition: 'finish_autopilot_then_start_ralph',
+        },
       });
 
       assert.match(instruction, /^omx ralph /);

@@ -75,6 +75,22 @@ export interface PipelineStage {
 /**
  * Configuration for a pipeline run.
  */
+export type AutopilotControllerAction = 'plan' | 'execute' | 'verify';
+
+export interface AutopilotControllerOptions {
+  /** Enable the autopilot runtime-controller compatibility wrapper. */
+  enabled?: boolean;
+
+  /** Optional explicit mapping between controller actions and pipeline stage names. */
+  stageByAction?: Partial<Record<AutopilotControllerAction, string>>;
+
+  /** Number of times the controller may route execution failures back to planning. */
+  maxReplanAttempts?: number;
+
+  /** Capture runtime bridge snapshot summaries into autopilot mode state when available. */
+  captureRuntimeSnapshot?: boolean;
+}
+
 export interface PipelineConfig {
   /** Human-readable pipeline name (used for state files and logging). */
   name: string;
@@ -108,6 +124,9 @@ export interface PipelineConfig {
 
   /** Callback fired on each stage transition. */
   onStageTransition?: (from: string, to: string) => void;
+
+  /** Autopilot runtime-controller compatibility settings. */
+  autopilotController?: AutopilotControllerOptions;
 }
 
 // ---------------------------------------------------------------------------

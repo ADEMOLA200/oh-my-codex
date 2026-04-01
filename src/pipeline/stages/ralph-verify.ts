@@ -55,6 +55,11 @@ export function createRalphVerifyStage(options: RalphVerifyStageOptions = {}): P
           availableAgentTypes,
           staffingPlan,
           executionArtifacts: teamArtifacts ?? {},
+          handoffPolicy: {
+            requiresAutopilotHandoff: true,
+            exclusivityGuard: 'autopilot-and-ralph-cannot-overlap',
+            recommendedTransition: 'finish_autopilot_then_start_ralph',
+          },
         };
 
         return {
@@ -96,6 +101,11 @@ export interface RalphVerifyDescriptor {
   availableAgentTypes: string[];
   staffingPlan: ReturnType<typeof buildFollowupStaffingPlan>;
   executionArtifacts: Record<string, unknown>;
+  handoffPolicy: {
+    requiresAutopilotHandoff: boolean;
+    exclusivityGuard: string;
+    recommendedTransition: 'finish_autopilot_then_start_ralph';
+  };
 }
 
 /**

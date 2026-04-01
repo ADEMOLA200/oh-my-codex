@@ -17,3 +17,5 @@ export { mergeConfig } from './config/generator.js';
 export { AGENT_DEFINITIONS, type AgentDefinition } from './agents/definitions.js';
 export { generateAgentToml, installNativeAgentConfigs } from './agents/native-config.js';
 export { hudCommand } from './hud/index.js';
+export * from './pipeline/index.js';
+export * from './autopilot/index.js';
