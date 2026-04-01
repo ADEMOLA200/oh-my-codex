@@ -159,6 +159,8 @@ describe('Team Exec Stage', () => {
     assert.ok(Array.isArray(descriptor.availableAgentTypes));
     assert.ok((descriptor.availableAgentTypes as unknown[]).length > 0);
     assert.equal(typeof (descriptor.staffingPlan as Record<string, unknown>).staffingSummary, 'string');
+    assert.equal(typeof descriptor.bootstrapCommand, 'string');
+    assert.ok(Array.isArray(descriptor.postLaunchLaneAllocation));
   });
 
   it('falls back to raw task when no ralplan artifacts exist', async () => {
@@ -168,6 +170,7 @@ describe('Team Exec Stage', () => {
     const descriptor = (result.artifacts as Record<string, unknown>).teamDescriptor as Record<string, unknown>;
     assert.equal(descriptor.task, 'raw task description');
     assert.equal(typeof (descriptor.staffingPlan as Record<string, unknown>).staffingSummary, 'string');
+    assert.equal(descriptor.bootstrapCommand, (descriptor.staffingPlan as Record<string, unknown>).launchHints && ((descriptor.staffingPlan as Record<string, unknown>).launchHints as Record<string, unknown>).shellCommand);
   });
 
   describe('buildTeamInstruction', () => {
@@ -256,6 +259,8 @@ describe('Ralph Verify Stage', () => {
     assert.ok(execArtifacts.teamDescriptor);
     assert.ok(Array.isArray(descriptor.availableAgentTypes));
     assert.equal(typeof (descriptor.staffingPlan as Record<string, unknown>).staffingSummary, 'string');
+    assert.equal((descriptor.handoffPolicy as Record<string, unknown>).requiresAutopilotHandoff, true);
+    assert.match(String((descriptor.handoffPolicy as Record<string, unknown>).exclusivityGuard), /cannot-overlap/);
   });
 
   describe('buildRalphInstruction', () => {
