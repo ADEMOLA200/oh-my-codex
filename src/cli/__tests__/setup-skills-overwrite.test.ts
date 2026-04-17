@@ -37,6 +37,7 @@ describe('omx setup skills overwrite behavior', () => {
       const skillsDir = join(wd, '.codex', 'skills');
       const installed = new Set(await readdir(skillsDir));
 
+      assert.equal(installed.has('analyze'), true);
       assert.equal(installed.has('team'), true);
       assert.equal(installed.has('worker'), true);
       assert.equal(installed.has('swarm'), false);
@@ -51,6 +52,10 @@ describe('omx setup skills overwrite behavior', () => {
       assert.equal(installed.has('configure-telegram'), false);
       assert.equal(installed.has('configure-slack'), false);
       assert.equal(installed.has('configure-openclaw'), false);
+      assert.match(
+        await readFile(join(skillsDir, 'analyze', 'SKILL.md'), 'utf-8'),
+        /^---\nname: analyze/m,
+      );
     } finally {
       process.chdir(previousCwd);
       await rm(wd, { recursive: true, force: true });

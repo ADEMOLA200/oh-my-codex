@@ -79,8 +79,7 @@
     {
       "name": "analyze",
       "category": "shortcut",
-      "status": "alias",
-      "canonical": "debugger",
+      "status": "active",
       "core": false,
       "internalRequired": false
     },
