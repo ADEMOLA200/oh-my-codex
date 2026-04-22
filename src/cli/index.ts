@@ -1261,7 +1261,14 @@ export function resolveNativeSessionName(
 function buildNativeHookBaseContext(
   cwd: string,
   sessionId: string,
-  normalizedEvent: "started" | "blocked" | "finished" | "failed",
+  normalizedEvent:
+    | "started"
+    | "blocked"
+    | "run.heartbeat"
+    | "run.blocked_on_user"
+    | "run.blocked_on_system"
+    | "finished"
+    | "failed",
   extra: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const repoPath =
